@@ -14,7 +14,9 @@ Production-grade real-time Object Detection and Tracking system engineered speci
 │       ├── system_design.md     # 3-Layer architecture, thread model, zero-copy data flow
 │       ├── software_design.md   # Decomposition, Dependency Injection, class hierarchies
 │       ├── high_level_design.md # Subsystem contracts and responsibilities
-│       └── low_level_design.md  # Data structures, math algorithms (letterbox, ray casting)
+│       ├── low_level_design.md  # Data structures, math algorithms (letterbox, ray casting)
+│       ├── threading_model.md   # Concurrency architecture & 6-thread detailed spec
+│       └── system_workflow.md   # Detailed per-frame CPU, GPU, RAM, Timing workflow
 │
 ├── config/
 │   ├── app_config.yaml          # Camera, TensorRT, MQTT, storage, and health configs

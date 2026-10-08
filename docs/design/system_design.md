@@ -130,3 +130,10 @@ sequenceDiagram
 | **Total Target** | **~730 MB App + 350 MB OS** | **~430 MB GPU** | **~50 - 65 ms total** |
 | **Free RAM Headroom** | **> 2.4 GB free** | - | **FPS: 18 - 22 FPS** |
 
+---
+
+## 5. Related Deep-Dive Specifications
+* 🧵 **[Threading & Concurrency Model (6 Threads Detailed)](threading_model.md)**: Phân bổ 6 threads, cơ chế khóa zero-latency ring buffer, thứ tự dừng an toàn.
+* ⚡ **[System Workflow Specification (CPU, GPU, RAM, Timing Matrix)](system_workflow.md)**: Đặc tả chi tiết từng mili-giây tương tác giữa CPU, GPU, RAM, DMA bus và các luồng trong 1 chu kỳ frame.
+
+
