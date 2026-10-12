@@ -19,7 +19,7 @@ int main() {
     d1.class_id = 0;
     d1.class_name = "person";
 
-    auto res1 = tracker.update({d1});
+    std::vector<edge_ai::TrackedObject> res1 = tracker.update({d1});
     // With min_hits = 2, first frame track is unconfirmed
     assert(res1.empty());
 
@@ -27,7 +27,7 @@ int main() {
     edge_ai::Detection d2 = d1;
     d2.bbox = {105.0f, 105.0f, 50.0f, 50.0f};
 
-    auto res2 = tracker.update({d2});
+    std::vector<edge_ai::TrackedObject> res2 = tracker.update({d2});
     assert(res2.size() == 1);
     int assigned_id = res2[0].track_id;
     assert(assigned_id > 0);
@@ -37,7 +37,7 @@ int main() {
     edge_ai::Detection d3 = d1;
     d3.bbox = {110.0f, 110.0f, 50.0f, 50.0f};
 
-    auto res3 = tracker.update({d3});
+    std::vector<edge_ai::TrackedObject> res3 = tracker.update({d3});
     assert(res3.size() == 1);
     assert(res3[0].track_id == assigned_id && "Track ID must remain persistent across frames");
 

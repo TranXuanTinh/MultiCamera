@@ -22,9 +22,9 @@ float CountingRule::crossProduct(cv::Point2f a, cv::Point2f b, cv::Point2f c) co
 std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& objects) {
     if (!enabled_) return std::nullopt;
 
-    for (const auto& obj : objects) {
+    for (const TrackedObject& obj : objects) {
         bool class_matches = target_classes_.empty();
-        for (const auto& cls : target_classes_) {
+        for (const std::string& cls : target_classes_) {
             if (obj.det.class_name == cls) {
                 class_matches = true;
                 break;
@@ -35,7 +35,7 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
         cv::Point2f center(obj.det.bbox.centerX(), obj.det.bbox.centerY());
         float current_side = crossProduct(p1_, p2_, center);
 
-        auto it = previous_side_.find(obj.track_id);
+        std::map<int, float>::iterator it = previous_side_.find(obj.track_id);
         if (it != previous_side_.end()) {
             float prev_side = it->second;
 

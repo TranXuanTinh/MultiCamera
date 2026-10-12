@@ -32,16 +32,16 @@ bool ZoneRule::isPointInPolygon(const cv::Point2f& pt) const {
 std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& objects) {
     if (!enabled_) return std::nullopt;
 
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_alert_time_).count();
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    long long elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_alert_time_).count();
     if (elapsed < cooldown_sec_) {
         return std::nullopt; // Cooldown active
     }
 
-    for (const auto& obj : objects) {
+    for (const TrackedObject& obj : objects) {
         // Class filter check
         bool class_matches = target_classes_.empty();
-        for (const auto& cls : target_classes_) {
+        for (const std::string& cls : target_classes_) {
             if (obj.det.class_name == cls) {
                 class_matches = true;
                 break;

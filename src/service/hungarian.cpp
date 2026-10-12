@@ -34,7 +34,7 @@ std::vector<std::pair<int, int>> HungarianAlgorithm::solve(const std::vector<std
     std::vector<bool> row_used(rows, false);
     std::vector<bool> col_used(cols, false);
 
-    for (const auto& cell : cells) {
+    for (const Cell& cell : cells) {
         if (!row_used[cell.r] && !col_used[cell.c]) {
             row_used[cell.r] = true;
             col_used[cell.c] = true;

@@ -61,11 +61,11 @@ void HealthService::monitorLoop() {
         status.cpu_usage = sensor_.readCpuUsage();
         status.gpu_usage = sensor_.readGpuUsage();
 
-        auto mem = sensor_.readMemoryInfo();
+        hal::MemInfo mem = sensor_.readMemoryInfo();
         status.ram_total_mb = mem.total_mb;
         status.ram_used_mb = mem.used_mb;
 
-        auto disk = sensor_.readDiskInfo("/");
+        hal::DiskInfo disk = sensor_.readDiskInfo("/");
         status.disk_usage_pct = (disk.total_mb > 0) ?
             (static_cast<float>(disk.used_mb) / disk.total_mb * 100.0f) : 0.0f;
 

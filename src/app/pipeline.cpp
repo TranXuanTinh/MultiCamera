@@ -32,7 +32,7 @@ bool Pipeline::processOneFrame(PipelineResult& result) {
     result.frame_id = frame.frame_id;
 
     // 2. Inference via InferenceService (YOLOv8 TensorRT)
-    auto detections = inference_.detect(frame);
+    std::vector<Detection> detections = inference_.detect(frame);
     result.inference_ms = inference_.getLastInferenceLatencyMs();
 
     // 3. Object Tracking via TrackerService (ByteTrack)
@@ -41,8 +41,8 @@ bool Pipeline::processOneFrame(PipelineResult& result) {
     // 4. Update Pipeline FPS
     frame_count_++;
     fps_counter_++;
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration<float>(now - fps_timer_).count();
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - fps_timer_).count();
     if (elapsed >= 1.0f) {
         current_fps_ = static_cast<float>(fps_counter_) / elapsed;
         fps_counter_ = 0;

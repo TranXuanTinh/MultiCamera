@@ -135,7 +135,7 @@ void StorageService::flushQueue() {
     if (batch.empty()) return;
 
     hal_.beginTransaction();
-    for (const auto& rec : batch) {
+    for (const DetRecord& rec : batch) {
         std::ostringstream ss;
         ss << "INSERT INTO detections (frame_id, track_id, class_name, class_id, confidence, bbox_x, bbox_y, bbox_w, bbox_h) VALUES ("
            << rec.frame_id << ", "
@@ -158,7 +158,7 @@ void StorageService::flushQueue() {
 }
 
 void StorageService::enforceRingBuffer() {
-    auto res = hal_.query("SELECT COUNT(*) AS cnt FROM detections;");
+    hal::SqlResultSet res = hal_.query("SELECT COUNT(*) AS cnt FROM detections;");
     if (!res.empty()) {
         try {
             int count = std::stoi(res[0].at("cnt"));

@@ -38,7 +38,7 @@ void CameraService::close() {
 }
 
 void CameraService::captureLoop() {
-    auto last_fps_time = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_fps_time = std::chrono::steady_clock::now();
     int fps_counter = 0;
 
     while (running_) {
@@ -72,8 +72,8 @@ void CameraService::captureLoop() {
 
         // Calculate moving average FPS
         ++fps_counter;
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration<float>(now - last_fps_time).count();
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - last_fps_time).count();
         if (elapsed >= 1.0f) {
             current_fps_ = static_cast<float>(fps_counter) / elapsed;
             fps_counter = 0;

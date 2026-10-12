@@ -5,8 +5,8 @@
 namespace edge_ai {
 
 static std::string getIsoTimestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+    std::time_t in_time_t = std::chrono::system_clock::to_time_t(now);
     std::stringstream ss;
     ss << std::put_time(std::gmtime(&in_time_t), "%Y-%m-%dT%H:%M:%SZ");
     return ss.str();
@@ -64,7 +64,7 @@ void MqttService::enqueueOffline(const std::string& topic, const std::string& pa
 void MqttService::drainOfflineQueue() {
     std::lock_guard<std::mutex> lock(queue_mtx_);
     while (!offline_queue_.empty() && hal_.isConnected()) {
-        const auto& item = offline_queue_.front();
+        const QueuedMsg& item = offline_queue_.front();
         if (hal_.publish(item.topic, item.payload, item.qos)) {
             offline_queue_.pop();
         } else {
@@ -89,7 +89,7 @@ std::string MqttService::serializeDetectionJson(const PipelineResult& result, co
        << "\"objects\":[";
 
     for (size_t i = 0; i < result.objects.size(); ++i) {
-        const auto& obj = result.objects[i];
+        const TrackedObject& obj = result.objects[i];
         if (i > 0) ss << ",";
         ss << "{"
            << "\"track_id\":" << obj.track_id << ","
@@ -150,8 +150,8 @@ bool MqttService::publishDetections(const PipelineResult& result, const std::str
     if (!config_.enabled) return true;
 
     // Rate limiting check
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_publish_time_).count();
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_publish_time_).count();
     if (elapsed < config_.publish_interval_ms) {
         return true; // Skip to preserve bandwidth
     }

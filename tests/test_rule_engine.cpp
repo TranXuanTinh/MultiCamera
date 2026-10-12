@@ -33,7 +33,7 @@ int main() {
     outside_obj.det.bbox = {400.0f, 400.0f, 50.0f, 50.0f};
     outside_obj.det.class_name = "person";
 
-    auto alerts1 = engine.evaluate({outside_obj});
+    std::vector<edge_ai::Alert> alerts1 = engine.evaluate({outside_obj});
     assert(alerts1.empty() && "No alert should trigger when outside zone");
 
     // Test Object inside zone
@@ -42,7 +42,7 @@ int main() {
     inside_obj.det.bbox = {50.0f, 50.0f, 50.0f, 50.0f};
     inside_obj.det.class_name = "person";
 
-    auto alerts2 = engine.evaluate({inside_obj});
+    std::vector<edge_ai::Alert> alerts2 = engine.evaluate({inside_obj});
     assert(alerts2.size() == 1 && "Alert must trigger when inside zone");
     assert(alerts2[0].rule_id == "r1");
     std::cout << "  Intrusion alert verified: " << alerts2[0].message << std::endl;

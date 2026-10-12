@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
+#include <cstring>
 
 #if defined(ENABLE_JETSON_CUDA)
 #include <NvOnnxParser.h>
@@ -117,25 +118,25 @@ bool JetsonGpuHAL::loadEngine(const std::string& onnx_path,
     }
 
     // 2. Build from ONNX if cache not available
-    auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger_));
+    std::unique_ptr<nvinfer1::IBuilder> builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger_));
     if (!builder) return false;
 
-    const auto explicitBatch = 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-    auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicitBatch));
-    auto parser = std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, logger_));
+    const uint32_t explicitBatch = 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+    std::unique_ptr<nvinfer1::INetworkDefinition> network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicitBatch));
+    std::unique_ptr<nvonnxparser::IParser> parser = std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, logger_));
 
     if (!parser->parseFromFile(onnx_path.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
         return false;
     }
 
-    auto builderConfig = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
+    std::unique_ptr<nvinfer1::IBuilderConfig> builderConfig = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
     builderConfig->setMaxWorkspaceSize(config.max_workspace_bytes);
 
     if (config.precision == "fp16" && builder->platformHasFastFp16()) {
         builderConfig->setFlag(nvinfer1::BuilderFlag::kFP16);
     }
 
-    auto plan = std::unique_ptr<nvinfer1::IHostMemory>(builder->buildSerializedNetwork(*network, *builderConfig));
+    std::unique_ptr<nvinfer1::IHostMemory> plan = std::unique_ptr<nvinfer1::IHostMemory>(builder->buildSerializedNetwork(*network, *builderConfig));
     if (!plan) return false;
 
     // Save serialized engine to cache file
@@ -165,12 +166,12 @@ float JetsonGpuHAL::runInference(GpuBuffer input_buffer, GpuBuffer output_buffer
     if (!context_ || !stream_) return 0.0f;
 
     void* bindings[2] = {input_buffer, output_buffer};
-    auto start = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 
     context_->enqueueV2(bindings, stream_, nullptr);
     cudaStreamSynchronize(stream_);
 
-    auto end = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     return std::chrono::duration<float, std::milli>(end - start).count();
 #else
     (void)input_buffer;

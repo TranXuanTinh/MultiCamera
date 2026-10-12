@@ -76,14 +76,14 @@ void EventBus::dispatchLoop() {
         std::vector<EventCallback> callbacks;
         {
             std::lock_guard<std::mutex> lock(subs_mutex_);
-            for (const auto& sub : subscriptions_) {
+            for (const Subscription& sub : subscriptions_) {
                 if (sub.type == event.type) {
                     callbacks.push_back(sub.callback);
                 }
             }
         }
 
-        for (const auto& cb : callbacks) {
+        for (const EventCallback& cb : callbacks) {
             try {
                 cb(event);
             } catch (...) {

@@ -16,9 +16,9 @@ void LogService::log(LogLevel level, const std::string& msg) {
 
     std::lock_guard<std::mutex> lock(log_mtx_);
 
-    auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+    std::time_t time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
 
     std::ostringstream ss;
     ss << std::put_time(std::localtime(&time_t_now), "%Y-%m-%d %H:%M:%S")

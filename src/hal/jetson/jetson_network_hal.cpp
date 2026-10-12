@@ -5,7 +5,7 @@ namespace edge_ai { namespace hal {
 
 #if defined(ENABLE_PAHO_MQTT)
 void JetsonNetworkHAL::onConnectionLost(void* context, char* cause) {
-    auto* self = static_cast<JetsonNetworkHAL*>(context);
+    JetsonNetworkHAL* self = static_cast<JetsonNetworkHAL*>(context);
     self->connected_ = false;
     if (self->conn_lost_cb_) {
         self->conn_lost_cb_(cause ? std::string(cause) : "Unknown cause");
@@ -13,7 +13,7 @@ void JetsonNetworkHAL::onConnectionLost(void* context, char* cause) {
 }
 
 int JetsonNetworkHAL::onMessageArrived(void* context, char* topicName, int /*topicLen*/, MQTTClient_message* message) {
-    auto* self = static_cast<JetsonNetworkHAL*>(context);
+    JetsonNetworkHAL* self = static_cast<JetsonNetworkHAL*>(context);
     if (self->msg_cb_) {
         std::string payload(static_cast<char*>(message->payload), message->payloadlen);
         self->msg_cb_(std::string(topicName), payload);

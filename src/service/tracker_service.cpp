@@ -37,7 +37,7 @@ std::vector<std::vector<float>> TrackerService::computeCostMatrix(
 
 std::vector<TrackedObject> TrackerService::update(const std::vector<Detection>& detections) {
     // 1. Predict all current tracks with Kalman filter
-    for (auto& trk : tracks_) {
+    for (TrackInternal& trk : tracks_) {
         trk.kf.predict();
         trk.age++;
         trk.time_since_update++;
@@ -45,20 +45,20 @@ std::vector<TrackedObject> TrackerService::update(const std::vector<Detection>& 
 
     // 2. Separate detections into high-score and low-score (ByteTrack approach)
     std::vector<Detection> det_first;
-    for (const auto& det : detections) {
+    for (const Detection& det : detections) {
         if (det.confidence >= 0.5f) {
             det_first.push_back(det);
         }
     }
 
     // 3. Associate high-score detections with tracks
-    auto cost_mat = computeCostMatrix(tracks_, det_first);
-    auto matches = HungarianAlgorithm::solve(cost_mat);
+    std::vector<std::vector<float>> cost_mat = computeCostMatrix(tracks_, det_first);
+    std::vector<std::pair<int, int>> matches = HungarianAlgorithm::solve(cost_mat);
 
     std::vector<bool> track_matched(tracks_.size(), false);
     std::vector<bool> det_matched(det_first.size(), false);
 
-    for (const auto& p : matches) {
+    for (const std::pair<int, int>& p : matches) {
         int t = p.first;
         int d = p.second;
         // Check IoU threshold
@@ -92,7 +92,7 @@ std::vector<TrackedObject> TrackerService::update(const std::vector<Detection>& 
 
     // 5. Update lost status and remove stale tracks
     for (size_t t = 0; t < tracks_.size(); ++t) {
-        if (!track_matched[t] && tracks_[t].time_since_update > 0) {
+        if (t < track_matched.size() && !track_matched[t] && tracks_[t].time_since_update > 0) {
             tracks_[t].state = TrackState::Lost;
         }
     }
@@ -109,7 +109,7 @@ std::vector<TrackedObject> TrackerService::update(const std::vector<Detection>& 
     std::vector<TrackedObject> result;
     result.reserve(tracks_.size());
 
-    for (const auto& trk : tracks_) {
+    for (const TrackInternal& trk : tracks_) {
         if (trk.state == TrackState::Confirmed) {
             TrackedObject obj;
             obj.track_id = trk.id;

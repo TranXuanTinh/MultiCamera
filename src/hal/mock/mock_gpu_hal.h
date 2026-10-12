@@ -33,7 +33,7 @@ public:
     }
 
     void free(GpuBuffer buf) override {
-        auto it = std::find(allocated_blocks_.begin(), allocated_blocks_.end(), buf);
+        std::vector<void*>::iterator it = std::find(allocated_blocks_.begin(), allocated_blocks_.end(), buf);
         if (it != allocated_blocks_.end()) {
             std::free(buf);
             allocated_blocks_.erase(it);

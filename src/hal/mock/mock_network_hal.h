@@ -45,7 +45,7 @@ public:
 
     // Helper for verification during testing
     size_t getPublishedCount(const std::string& topic) const {
-        auto it = published_messages_.find(topic);
+        std::map<std::string, std::vector<std::string>>::const_iterator it = published_messages_.find(topic);
         return (it != published_messages_.end()) ? it->second.size() : 0;
     }
 

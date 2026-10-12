@@ -21,7 +21,7 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
         }
 
         if (config["camera"]) {
-            auto c = config["camera"];
+            YAML::Node c = config["camera"];
             if (c["type"]) camera_cfg_.type = c["type"].as<std::string>();
             if (c["device"]) camera_cfg_.device = c["device"].as<std::string>();
             if (c["width"]) camera_cfg_.width = c["width"].as<int>();
@@ -32,7 +32,7 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
         }
 
         if (config["model"]) {
-            auto m = config["model"];
+            YAML::Node m = config["model"];
             if (m["onnx_path"]) model_cfg_.onnx_path = m["onnx_path"].as<std::string>();
             if (m["engine_path"]) model_cfg_.engine_path = m["engine_path"].as<std::string>();
             if (m["class_file"]) model_cfg_.class_file = m["class_file"].as<std::string>();
@@ -43,14 +43,14 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
         }
 
         if (config["tracker"]) {
-            auto t = config["tracker"];
+            YAML::Node t = config["tracker"];
             if (t["max_age"]) tracker_cfg_.max_age = t["max_age"].as<int>();
             if (t["min_hits"]) tracker_cfg_.min_hits = t["min_hits"].as<int>();
             if (t["iou_threshold"]) tracker_cfg_.iou_thresh = t["iou_threshold"].as<float>();
         }
 
         if (config["mqtt"]) {
-            auto q = config["mqtt"];
+            YAML::Node q = config["mqtt"];
             if (q["enabled"]) mqtt_cfg_.enabled = q["enabled"].as<bool>();
             if (q["broker"]) mqtt_cfg_.broker = q["broker"].as<std::string>();
             if (q["client_id"]) mqtt_cfg_.client_id = q["client_id"].as<std::string>();
@@ -62,7 +62,7 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
         }
 
         if (config["storage"]) {
-            auto s = config["storage"];
+            YAML::Node s = config["storage"];
             if (s["enabled"]) storage_cfg_.enabled = s["enabled"].as<bool>();
             if (s["db_path"]) storage_cfg_.db_path = s["db_path"].as<std::string>();
             if (s["max_records"]) storage_cfg_.max_records = s["max_records"].as<int>();
@@ -70,7 +70,7 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
         }
 
         if (config["health"]) {
-            auto h = config["health"];
+            YAML::Node h = config["health"];
             if (h["interval_sec"]) health_cfg_.interval_sec = h["interval_sec"].as<int>();
             if (h["watchdog_enabled"]) health_cfg_.watchdog_enabled = h["watchdog_enabled"].as<bool>();
             if (h["watchdog_device"]) health_cfg_.watchdog_device = h["watchdog_device"].as<std::string>();

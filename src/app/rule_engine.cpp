@@ -26,7 +26,7 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
     try {
         YAML::Node doc = YAML::LoadFile(rules_yaml_path);
         if (doc["rules"]) {
-            for (const auto& item : doc["rules"]) {
+            for (const YAML::Node& item : doc["rules"]) {
                 std::string id = item["id"].as<std::string>();
                 std::string name = item["name"].as<std::string>();
                 std::string type = item["type"].as<std::string>();
@@ -34,7 +34,7 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
 
                 std::vector<std::string> classes;
                 if (item["params"]["target_classes"]) {
-                    for (const auto& c : item["params"]["target_classes"]) {
+                    for (const YAML::Node& c : item["params"]["target_classes"]) {
                         classes.push_back(c.as<std::string>());
                     }
                 }
@@ -51,11 +51,11 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
                 if (type == "zone_intrusion") {
                     std::vector<cv::Point2f> pts;
                     if (item["params"]["zone"]["points"]) {
-                        for (const auto& pt : item["params"]["zone"]["points"]) {
+                        for (const YAML::Node& pt : item["params"]["zone"]["points"]) {
                             pts.push_back(cv::Point2f(pt[0].as<float>(), pt[1].as<float>()));
                         }
                     }
-                    auto rule = std::make_unique<ZoneRule>(id, name, classes, pts, severity, message, cooldown);
+                    std::unique_ptr<ZoneRule> rule = std::make_unique<ZoneRule>(id, name, classes, pts, severity, message, cooldown);
                     rule->setEnabled(enabled);
                     addRule(std::move(rule));
                 } else if (type == "line_crossing") {
@@ -69,7 +69,7 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
                                          item["params"]["line"]["end"][1].as<float>());
                     }
                     std::string direction = item["params"]["direction"].as<std::string>("both");
-                    auto rule = std::make_unique<CountingRule>(id, name, classes, p1, p2, direction, severity, message);
+                    std::unique_ptr<CountingRule> rule = std::make_unique<CountingRule>(id, name, classes, p1, p2, direction, severity, message);
                     rule->setEnabled(enabled);
                     addRule(std::move(rule));
                 }
@@ -100,10 +100,10 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
 std::vector<Alert> RuleEngine::evaluate(const std::vector<TrackedObject>& objects) {
     std::vector<Alert> alerts;
 
-    for (const auto& rule : rules_) {
+    for (const std::unique_ptr<IRule>& rule : rules_) {
         if (!rule->isEnabled()) continue;
 
-        auto maybe_alert = rule->evaluate(objects);
+        std::optional<Alert> maybe_alert = rule->evaluate(objects);
         if (maybe_alert.has_value()) {
             alerts.push_back(maybe_alert.value());
 

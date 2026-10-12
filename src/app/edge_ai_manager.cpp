@@ -72,11 +72,11 @@ void EdgeAIManager::wireEventBus() {
     // 1. Subscribe MqttService & StorageService to TRACKED_OBJECTS events
     event_bus_->subscribe(EventType::TRACKED_OBJECTS, [this](const Event& evt) {
         if (!evt.data.has_value()) return;
-        const auto& result = evt.as<PipelineResult>();
+        const PipelineResult& result = evt.as<PipelineResult>();
 
         mqtt_svc_->publishDetections(result, config_->getDeviceId());
 
-        for (const auto& obj : result.objects) {
+        for (const TrackedObject& obj : result.objects) {
             storage_svc_->recordDetection(result.frame_id, obj);
         }
     });
@@ -84,7 +84,7 @@ void EdgeAIManager::wireEventBus() {
     // 2. Subscribe MqttService & StorageService to ALERT events
     event_bus_->subscribe(EventType::ALERT, [this](const Event& evt) {
         if (!evt.data.has_value()) return;
-        const auto& alert = evt.as<Alert>();
+        const Alert& alert = evt.as<Alert>();
 
         LogService::warn("ALERT TRIGGERED: [" + alert.rule_name + "] " + alert.message);
         mqtt_svc_->publishAlert(alert, config_->getDeviceId());
@@ -94,7 +94,7 @@ void EdgeAIManager::wireEventBus() {
     // 3. Subscribe MqttService to HEALTH_STATUS events
     event_bus_->subscribe(EventType::HEALTH_STATUS, [this](const Event& evt) {
         if (!evt.data.has_value()) return;
-        const auto& health = evt.as<HealthStatus>();
+        const HealthStatus& health = evt.as<HealthStatus>();
 
         mqtt_svc_->publishHealth(health, config_->getDeviceId());
     });
