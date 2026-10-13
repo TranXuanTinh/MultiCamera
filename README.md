@@ -54,15 +54,17 @@ Production-grade real-time Multi-Camera Video Analytics, Object Detection, Track
 ├── include/
 │   ├── app/                     # Tier 1: types.h, edge_ai_manager.h, pipeline.h, rule_engine.h
 │   │   └── rules/               # i_rule.h, zone_rule.h, counting_rule.h
-│   ├── service/                 # Tier 2: config, storage, mqtt, health, event_bus
-│   └── hal/                     # Tier 3: i_deepstream_hal.h, i_storage_hal, i_watchdog_hal
+│   ├── service/                 # Tier 2: camera, inference, tracker, pre/postprocessor,
+│   │                            #         kalman/hungarian, event_bus, mqtt, storage, health, config, log
+│   └── hal/                     # Tier 3: i_deepstream_hal, i_camera_hal, i_gpu_hal,
+│                                #         i_network_hal, i_storage_hal, i_sensor_hal, i_watchdog_hal
 │
 ├── src/
 │   ├── app/                     # Tier 1 implementation & main.cpp entry point
 │   ├── service/                 # Tier 2 platform-independent services
 │   └── hal/
-│       ├── jetson/              # Tier 3 Jetson DeepStream HAL (nvstreammux, nvinfer, pad probe)
-│       └── mock/                # Tier 3 Mock DeepStream HAL for 100% Host PC testing
+│       ├── jetson/              # Tier 3 Jetson HALs (DeepStream, GStreamer, CUDA, SQLite, sysfs)
+│       └── mock/                # Tier 3 Mock HALs for 100% Host PC testing without hardware
 │
 ├── tests/                       # Unit tests for Multi-Camera Pipeline and Per-Camera RuleEngine
 ├── yocto/meta-jetson-ai-detect/ # Custom Yocto layer (recipes for app and system image)

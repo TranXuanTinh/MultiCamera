@@ -23,6 +23,7 @@ IMAGE_INSTALL = " \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-nvarguscamerasrc \
     gstreamer1.0-plugins-nvvidconv \
+    gstreamer1.0-plugins-nvvideo4linux2 \
     \
     edge-ai-manager \
     \

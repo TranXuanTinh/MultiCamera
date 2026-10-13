@@ -54,6 +54,12 @@ flowchart TD
 | **Service** | **MQTT Worker** | Service / HAL | Paho MQTT C runtime | Bất đồng bộ | 1% – 2% | Quản lý socket TCP/TLS, publish telemetry kèm `camera_id` |
 | **Service** | **Health & Watchdog** | Service Layer | `HealthService::monitorLoop()` | 30 giây / lần | < 0.5% | Đọc sysfs nhiệt độ, đá `/dev/watchdog` duy trì hệ thống |
 
+### 2.1 Luồng Trong Chế Độ Modular Fallback Pipeline (Khi không chạy DeepStream)
+Khi ứng dụng chạy ở chế độ đơn kênh / kiểm tra độc lập dịch vụ:
+* **`CameraService`**: Quản lý luồng thu nhận ảnh tuần tự từ `ICameraHAL` (`grabFrame()`), duy trì tốc độ 30 FPS.
+* **`InferenceService`**: Thực thi quy trình tiền xử lý (`Preprocessor`), chuyển giao buffer sang `IGpuHAL::runInference()` trên GPU Stream, và giải mã tensor (`Postprocessor`).
+* **`TrackerService`**: Thực hiện cập nhật ma trận hiệp phương sai `KalmanFilter` và giải bài toán gán cặp `Hungarian` trên CPU trong thời gian $< 2\text{ ms}$ cho mỗi frame.
+
 ---
 
 ## 3. Cơ Chế Đồng Bộ & Trao Đổi Dữ Liệu Đa Luồng

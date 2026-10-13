@@ -1,7 +1,5 @@
-SUMMARY = "Edge AI Object Detection on Jetson Nano with TensorRT and Yocto"
-SUMMARY = "Multi-Camera Edge AI Video Analytics on Jetson with DeepStream and Yocto"
+SUMMARY = "Multi-Camera Edge AI Video Analytics on Jetson Nano with DeepStream and Yocto"
 DESCRIPTION = "Production C++17 application implementing 3-layer architecture \
-               for YOLOv8 real-time detection, ByteTrack tracking, and MQTT telemetry."
                for Multi-Camera DeepStream SDK video analytics, YOLOv8 detection, \
                NvTracker tracking, and MQTT telemetry."
 LICENSE = "MIT"

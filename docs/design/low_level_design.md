@@ -146,9 +146,39 @@ void JetsonDeepStreamHAL::handlePadProbe(GstBuffer* buf) {
 
 ---
 
-## 3. Mathematical Algorithms
+## 3. Video Analytics Services Algorithms (Modular Path)
 
-### 3.1 Ray-Casting Polygon Point-in-Polygon (Zone Rule)
+### 3.1 Preprocessor (Letterbox Transform)
+To adapt arbitrary camera resolutions (e.g. $1280 \times 720$) into YOLOv8 input size ($640 \times 640$) without distortion:
+1. Scale ratio $r = \min\left(\frac{640}{W}, \frac{640}{H}\right)$.
+2. Scaled dimensions: $w_{\text{scaled}} = W \times r$, $h_{\text{scaled}} = H \times r$.
+3. Offsets: $dx = (640 - w_{\text{scaled}}) / 2$, $dy = (640 - h_{\text{scaled}}) / 2$.
+4. Normalization and CHW formatting:
+   $$\text{tensor}[c, y, x] = \frac{\text{pixel}[y, x, c]}{255.0}$$
+
+### 3.2 Postprocessor (YOLOv8 Output Tensor Decoding)
+The YOLOv8 ONNX model outputs tensor shape $(1, 84, 8400)$:
+* 84 rows = 4 bounding box coordinates $[cx, cy, w, h] + 80$ COCO class scores.
+* 8400 columns = candidate anchor points.
+Decoding logic:
+1. For each candidate $j \in [0, 8399]$:
+   * Find class score $S_{\max} = \max_{k \in [0, 79]} \text{score}[k, j]$ and class index $C$.
+   * If $S_{\max} < \text{confidence\_threshold}$, reject.
+2. Unletterbox bounding box:
+   $$x = \frac{cx - w/2 - dx}{r}, \quad y = \frac{cy - h/2 - dy}{r}, \quad w' = \frac{w}{r}, \quad h' = \frac{h}{r}$$
+3. Apply Non-Maximum Suppression (NMS) with IoU threshold $= 0.50$.
+
+### 3.3 TrackerService (ByteTrack with Kalman Filter & Hungarian)
+* **Kalman Filter**: Tracks 8D state vector $[x, y, a, h, \dot{x}, \dot{y}, \dot{a}, \dot{h}]^T$ where $a = w/h$ is aspect ratio.
+* **Two-Stage Association**:
+  * Stage 1: Associate confirmed tracks with high-confidence detections ($S \ge 0.5$) using Hungarian assignment on $1 - \text{IoU}$ cost matrix.
+  * Stage 2: Associate remaining unconfirmed tracks with low-confidence detections ($0.1 \le S < 0.5$) to maintain tracks through partial occlusions.
+
+---
+
+## 4. Mathematical Domain Rules
+
+### 4.1 Ray-Casting Polygon Point-in-Polygon (`ZoneRule`)
 Determines whether point $(x, y)$ is enclosed within an arbitrary $n$-vertex polygon $P = [v_0, v_1, \dots, v_{n-1}]$:
 ```cpp
 bool isPointInsidePolygon(const cv::Point2f& pt, const std::vector<cv::Point2f>& poly) {
@@ -164,14 +194,14 @@ bool isPointInsidePolygon(const cv::Point2f& pt, const std::vector<cv::Point2f>&
 }
 ```
 
-### 3.2 2D Vector Cross-Product (Line Crossing Counter)
+### 4.2 2D Vector Cross-Product (`CountingRule`)
 Determines which side of directed segment $\vec{AB}$ point $C$ lies on:
 $$\text{crossProduct}(A, B, C) = (B_x - A_x) \times (C_y - A_y) - (B_y - A_y) \times (C_x - A_x)$$
 * If $\text{sign}(\text{crossProduct}_{t-1}) \neq \text{sign}(\text{crossProduct}_t)$, the object crossed the tripwire during the frame transition.
 
 ---
 
-## 4. SQLite Multi-Camera Storage Schema
+## 5. SQLite Multi-Camera Storage Schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS detections (
@@ -216,7 +246,7 @@ DELETE FROM detections WHERE id IN (
 
 ---
 
-## 5. Hardware Watchdog ioctl Protocol
+## 6. Hardware Watchdog ioctl Protocol (`IWatchdogHAL`)
 
 ```cpp
 int fd = open("/dev/watchdog", O_WRONLY);

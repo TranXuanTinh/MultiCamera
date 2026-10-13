@@ -11,25 +11,28 @@ In accordance with embedded real-time standards (AUTOSAR, POSIX profiles, IEC 62
 +-------------------------------------------------------------------------------+
 | 1. APP LAYER (Business Logic & Orchestration)                                |
 |    - EdgeAIManager (Lifecycle, Multi-Camera DI, Signal Handling)              |
-|    - Pipeline (DeepStream Pipeline Orchestration & Frame Stepping)            |
+|    - Pipeline (Dual Mode: DeepStream Orchestration / Modular Service Pipeline)|
 |    - RuleEngine (Per-Camera Rules: Zone Intrusion, Line Crossing, Counting)   |
 +-----------------------------------^-------------------------------------------+
                                     | calls only
 +-----------------------------------v-------------------------------------------+
 | 2. SERVICE LAYER (Platform-Independent Services)                              |
-|    - EventBus (High-throughput asynchronous Pub/Sub dispatcher)               |
-|    - MqttService (Multi-Camera Telemetry, Alert Publishing, Offline Queue)    |
-|    - StorageService (SQLite Multi-Camera Table Schema, Batch Transactions)     |
-|    - HealthService (Thermal, GPU/CPU load, Hardware Watchdog Keepalive)       |
-|    - ConfigService (Multi-Camera YAML parser & DeepStream property loader)    |
+|    - Video Analytics: CameraService, InferenceService, TrackerService         |
+|    - Processing: Preprocessor (Letterbox), Postprocessor (YOLOv8 NMS)         |
+|    - Tracking Math: KalmanFilter (8D State), Hungarian (Bipartite Matcher)    |
+|    - Infrastructure: EventBus (Pub/Sub), MqttService (Telemetry/Alerts)       |
+|    - Persistence & Health: StorageService (SQLite), HealthService, ConfigService|
+|    - Logging: LogService (spdlog thread-safe asynchronous logging)            |
 +-----------------------------------^-------------------------------------------+
                                     | calls only
 +-----------------------------------v-------------------------------------------+
 | 3. HARDWARE ABSTRACTION LAYER - HAL (DeepStream & Driver Interfaces)          |
-|    - IDeepStreamHAL (Multi-Source Pipeline, Pad Probe, Batch Metadata API)    |
-|    - JetsonDeepStreamHAL (GStreamer 1.16+, nvstreammux, nvinfer, nvtracker)   |
-|    - MockDeepStreamHAL (100% Host PC Multi-Stream Simulation without Hardware)|
-|    - INetworkHAL, IStorageHAL, ISensorHAL, IWatchdogHAL                       |
+|    - IDeepStreamHAL (nvstreammux batching, nvinfer PGIE, nvtracker, pad probe)|
+|    - ICameraHAL (MIPI CSI nvarguscamerasrc / USB V4L2)                        |
+|    - IGpuHAL (CUDA runtime memory, TensorRT execution context)                |
+|    - INetworkHAL (Paho MQTT), IStorageHAL (SQLite3 embedded)                  |
+|    - ISensorHAL (sysfs thermal/load), IWatchdogHAL (/dev/watchdog)            |
+|    - Jetson Implementations vs 100% Host PC Mock Implementations              |
 +-------------------------------------------------------------------------------+
 ```
 
