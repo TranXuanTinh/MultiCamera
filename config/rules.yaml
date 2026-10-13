@@ -1,7 +1,10 @@
-# Rule Engine Configuration
+# Multi-Camera Rule Engine Configuration
+# Rules can be bound to a specific camera (e.g. camera_id: "cam_01") or wildcard (camera_id: "*")
+
 rules:
   - id: "rule_zone_01"
-    name: "Restricted Area Intrusion"
+    name: "Front Gate Restricted Area Intrusion"
+    camera_id: "cam_01"         # Applies only to Camera 1 (Front Gate)
     enabled: true
     type: "zone_intrusion"
     params:
@@ -14,11 +17,12 @@ rules:
           - [200, 550]
     alert:
       severity: "high"
-      message: "Unauthorized person detected in restricted safety zone"
+      message: "Unauthorized person detected in restricted safety zone at Front Gate"
       cooldown_sec: 15
 
   - id: "rule_count_01"
-    name: "Vehicle Line Crossing Counter"
+    name: "Loading Dock Vehicle Line Crossing Counter"
+    camera_id: "cam_02"         # Applies only to Camera 2 (Loading Dock)
     enabled: true
     type: "line_crossing"
     params:
@@ -29,6 +33,23 @@ rules:
       direction: "down"
     alert:
       severity: "info"
-      message: "Vehicle entered controlled facility gate"
+      message: "Vehicle crossed loading dock boundary"
       cooldown_sec: 1
 
+  - id: "rule_perimeter_all"
+    name: "General Perimeter Intrusion"
+    camera_id: "*"              # Wildcard: Applies across all camera channels
+    enabled: true
+    type: "zone_intrusion"
+    params:
+      target_classes: ["person"]
+      zone:
+        points:
+          - [50, 50]
+          - [400, 50]
+          - [400, 300]
+          - [50, 300]
+    alert:
+      severity: "critical"
+      message: "Perimeter breach detected across facility cameras"
+      cooldown_sec: 10

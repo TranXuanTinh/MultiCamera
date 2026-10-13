@@ -13,6 +13,8 @@ public:
     bool loadFromFile(const std::string& filepath);
 
     const CameraConfig& getCameraConfig() const { return camera_cfg_; }
+    const std::vector<CameraSourceConfig>& getCameras() const { return cameras_; }
+    const DeepStreamConfig& getDeepStreamConfig() const { return ds_cfg_; }
     const ModelConfig& getModelConfig() const { return model_cfg_; }
     const TrackerConfig& getTrackerConfig() const { return tracker_cfg_; }
     const MqttConfig& getMqttConfig() const { return mqtt_cfg_; }
@@ -27,6 +29,8 @@ private:
     std::string rules_config_file_{"config/rules.yaml"};
 
     CameraConfig camera_cfg_;
+    std::vector<CameraSourceConfig> cameras_;
+    DeepStreamConfig ds_cfg_;
     ModelConfig model_cfg_;
     TrackerConfig tracker_cfg_;
     MqttConfig mqtt_cfg_;

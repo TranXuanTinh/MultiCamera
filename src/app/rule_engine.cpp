@@ -31,6 +31,10 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
                 std::string name = item["name"].as<std::string>();
                 std::string type = item["type"].as<std::string>();
                 bool enabled = item["enabled"].as<bool>(true);
+                std::string camera_id = "*";
+                if (item["camera_id"]) {
+                    camera_id = item["camera_id"].as<std::string>();
+                }
 
                 std::vector<std::string> classes;
                 if (item["params"]["target_classes"]) {
@@ -55,7 +59,8 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
                             pts.push_back(cv::Point2f(pt[0].as<float>(), pt[1].as<float>()));
                         }
                     }
-                    std::unique_ptr<ZoneRule> rule = std::make_unique<ZoneRule>(id, name, classes, pts, severity, message, cooldown);
+                    std::unique_ptr<ZoneRule> rule = std::make_unique<ZoneRule>(
+                        id, name, classes, pts, severity, message, cooldown, camera_id);
                     rule->setEnabled(enabled);
                     addRule(std::move(rule));
                 } else if (type == "line_crossing") {
@@ -69,7 +74,8 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
                                          item["params"]["line"]["end"][1].as<float>());
                     }
                     std::string direction = item["params"]["direction"].as<std::string>("both");
-                    std::unique_ptr<CountingRule> rule = std::make_unique<CountingRule>(id, name, classes, p1, p2, direction, severity, message);
+                    std::unique_ptr<CountingRule> rule = std::make_unique<CountingRule>(
+                        id, name, classes, p1, p2, direction, severity, message, camera_id);
                     rule->setEnabled(enabled);
                     addRule(std::move(rule));
                 }
@@ -91,7 +97,7 @@ bool RuleEngine::loadRulesFromConfig(const std::string& rules_yaml_path) {
     addRule(std::make_unique<ZoneRule>(
         "rule_zone_default", "Default Person Restricted Area",
         std::vector<std::string>{"person"}, default_zone, "high",
-        "Person detected in restricted safety zone", 10
+        "Person detected in restricted safety zone", 10, "*"
     ));
 
     return true;

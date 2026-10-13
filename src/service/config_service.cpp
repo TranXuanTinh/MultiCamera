@@ -20,6 +20,26 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
             }
         }
 
+        cameras_.clear();
+        if (config["cameras"]) {
+            for (const YAML::Node& node : config["cameras"]) {
+                CameraSourceConfig cam;
+                if (node["id"]) cam.id = node["id"].as<std::string>();
+                if (node["name"]) cam.name = node["name"].as<std::string>();
+                if (node["type"]) cam.type = node["type"].as<std::string>();
+                if (node["uri"]) cam.uri = node["uri"].as<std::string>();
+                else if (node["device"]) cam.uri = node["device"].as<std::string>();
+                if (node["sensor_id"]) cam.sensor_id = node["sensor_id"].as<int>();
+                if (node["flip_method"]) cam.flip_method = node["flip_method"].as<int>();
+                if (node["width"]) cam.width = node["width"].as<int>();
+                if (node["height"]) cam.height = node["height"].as<int>();
+                if (node["fps"]) cam.fps = node["fps"].as<int>();
+                if (node["enabled"]) cam.enabled = node["enabled"].as<bool>();
+                if (node["reconnect_interval_sec"]) cam.reconnect_interval_sec = node["reconnect_interval_sec"].as<int>();
+                cameras_.push_back(cam);
+            }
+        }
+
         if (config["camera"]) {
             YAML::Node c = config["camera"];
             if (c["type"]) camera_cfg_.type = c["type"].as<std::string>();
@@ -29,6 +49,37 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
             if (c["fps"]) camera_cfg_.fps = c["fps"].as<int>();
             if (c["csi_sensor_id"]) camera_cfg_.csi_sensor_id = c["csi_sensor_id"].as<int>();
             if (c["csi_flip_method"]) camera_cfg_.csi_flip_method = c["csi_flip_method"].as<int>();
+
+            if (cameras_.empty()) {
+                CameraSourceConfig cam;
+                cam.id = "cam_0";
+                cam.name = "Camera 0";
+                cam.type = camera_cfg_.type;
+                cam.uri = camera_cfg_.device;
+                cam.sensor_id = camera_cfg_.csi_sensor_id;
+                cam.flip_method = camera_cfg_.csi_flip_method;
+                cam.width = camera_cfg_.width;
+                cam.height = camera_cfg_.height;
+                cam.fps = camera_cfg_.fps;
+                cameras_.push_back(cam);
+            }
+        }
+
+        if (config["deepstream"]) {
+            YAML::Node ds = config["deepstream"];
+            if (ds["batch_size"]) ds_cfg_.batch_size = ds["batch_size"].as<int>();
+            if (ds["batched_push_timeout_us"]) ds_cfg_.batched_push_timeout_us = ds["batched_push_timeout_us"].as<int>();
+            if (ds["muxer_width"]) ds_cfg_.muxer_width = ds["muxer_width"].as<int>();
+            if (ds["muxer_height"]) ds_cfg_.muxer_height = ds["muxer_height"].as<int>();
+            if (ds["pgie_config"]) ds_cfg_.pgie_config_file = ds["pgie_config"].as<std::string>();
+            if (ds["tracker_config"]) ds_cfg_.tracker_config_file = ds["tracker_config"].as<std::string>();
+            if (ds["enable_tiler"]) ds_cfg_.enable_tiler = ds["enable_tiler"].as<bool>();
+            if (ds["tiler_rows"]) ds_cfg_.tiler_rows = ds["tiler_rows"].as<int>();
+            if (ds["tiler_cols"]) ds_cfg_.tiler_cols = ds["tiler_cols"].as<int>();
+            if (ds["tiler_width"]) ds_cfg_.tiler_width = ds["tiler_width"].as<int>();
+            if (ds["tiler_height"]) ds_cfg_.tiler_height = ds["tiler_height"].as<int>();
+            if (ds["enable_osd"]) ds_cfg_.enable_osd = ds["enable_osd"].as<bool>();
+            if (ds["sink_type"]) ds_cfg_.sink_type = ds["sink_type"].as<std::string>();
         }
 
         if (config["model"]) {
@@ -94,6 +145,12 @@ bool ConfigService::loadFromFile(const std::string& filepath) {
     model_cfg_.onnx_path = "models/yolov8n.onnx";
     model_cfg_.engine_path = "models/yolov8n_fp16.engine";
     model_cfg_.class_file = "models/coco_classes.txt";
+
+    if (cameras_.empty()) {
+        cameras_.push_back({"cam_01", "Camera 1 (CSI)", "csi", "/dev/video0", 0, 0, 1280, 720, 30, true, 5});
+        cameras_.push_back({"cam_02", "Camera 2 (RTSP)", "rtsp", "rtsp://127.0.0.1:8554/live", 1, 0, 1280, 720, 30, true, 5});
+    }
+    ds_cfg_.batch_size = 2;
     return true;
 #endif
 }

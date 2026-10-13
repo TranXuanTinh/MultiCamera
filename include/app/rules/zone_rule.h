@@ -14,13 +14,15 @@ public:
              const std::vector<cv::Point2f>& polygon_points,
              const std::string& severity = "high",
              const std::string& message = "Zone intrusion detected",
-             int cooldown_sec = 10);
+             int cooldown_sec = 10,
+             const std::string& camera_id = "*");
 
     ~ZoneRule() override = default;
 
     std::string getId() const override { return id_; }
     std::string getName() const override { return name_; }
     std::string getType() const override { return "zone_intrusion"; }
+    std::string getCameraId() const override { return camera_id_; }
     bool isEnabled() const override { return enabled_; }
     void setEnabled(bool enabled) override { enabled_ = enabled; }
 
@@ -36,6 +38,7 @@ private:
     std::string severity_;
     std::string message_;
     int cooldown_sec_{10};
+    std::string camera_id_{"*"};
     bool enabled_{true};
 
     std::chrono::steady_clock::time_point last_alert_time_;

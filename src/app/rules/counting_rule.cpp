@@ -9,10 +9,12 @@ CountingRule::CountingRule(const std::string& id,
                            cv::Point2f p1, cv::Point2f p2,
                            const std::string& direction,
                            const std::string& severity,
-                           const std::string& message)
+                           const std::string& message,
+                           const std::string& camera_id)
     : id_(id), name_(name), target_classes_(target_classes),
       p1_(p1), p2_(p2), direction_(direction),
-      severity_(severity), message_(message) {
+      severity_(severity), message_(message),
+      camera_id_(camera_id) {
 }
 
 float CountingRule::crossProduct(cv::Point2f a, cv::Point2f b, cv::Point2f c) const {
@@ -23,6 +25,11 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
     if (!enabled_) return std::nullopt;
 
     for (const TrackedObject& obj : objects) {
+        // Camera ID check: if rule specifies a camera, skip objects from other cameras
+        if (!camera_id_.empty() && camera_id_ != "*" && obj.camera_id != camera_id_) {
+            continue;
+        }
+
         bool class_matches = target_classes_.empty();
         for (const std::string& cls : target_classes_) {
             if (obj.det.class_name == cls) {
@@ -48,6 +55,8 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
                 std::ostringstream ss;
                 ss << "count-" << id_ << "-" << obj.track_id << "-" << total_count_;
                 a.id = ss.str();
+                a.camera_id = obj.camera_id;
+                a.source_id = obj.source_id;
                 a.rule_id = id_;
                 a.rule_name = name_;
                 a.severity = severity_;

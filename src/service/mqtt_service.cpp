@@ -82,6 +82,8 @@ std::string MqttService::serializeDetectionJson(const PipelineResult& result, co
     std::ostringstream ss;
     ss << "{"
        << "\"device_id\":\"" << device_id << "\","
+       << "\"camera_id\":\"" << result.camera_id << "\","
+       << "\"source_id\":" << result.source_id << ","
        << "\"timestamp\":\"" << getIsoTimestamp() << "\","
        << "\"frame_id\":" << result.frame_id << ","
        << "\"inference_ms\":" << std::fixed << std::setprecision(1) << result.inference_ms << ","
@@ -93,6 +95,7 @@ std::string MqttService::serializeDetectionJson(const PipelineResult& result, co
         if (i > 0) ss << ",";
         ss << "{"
            << "\"track_id\":" << obj.track_id << ","
+           << "\"camera_id\":\"" << obj.camera_id << "\","
            << "\"class\":\"" << obj.det.class_name << "\","
            << "\"confidence\":" << std::setprecision(2) << obj.det.confidence << ","
            << "\"bbox\":{"
@@ -113,6 +116,8 @@ std::string MqttService::serializeAlertJson(const Alert& alert, const std::strin
     std::ostringstream ss;
     ss << "{"
        << "\"device_id\":\"" << device_id << "\","
+       << "\"camera_id\":\"" << alert.camera_id << "\","
+       << "\"source_id\":" << alert.source_id << ","
        << "\"alert_id\":\"" << alert.id << "\","
        << "\"rule_id\":\"" << alert.rule_id << "\","
        << "\"rule_name\":\"" << alert.rule_name << "\","
@@ -121,6 +126,7 @@ std::string MqttService::serializeAlertJson(const Alert& alert, const std::strin
        << "\"message\":\"" << alert.message << "\","
        << "\"trigger_object\":{"
        << "\"track_id\":" << alert.trigger.track_id << ","
+       << "\"camera_id\":\"" << alert.trigger.camera_id << "\","
        << "\"class\":\"" << alert.trigger.det.class_name << "\","
        << "\"confidence\":" << std::fixed << std::setprecision(2) << alert.trigger.det.confidence
        << "}}";

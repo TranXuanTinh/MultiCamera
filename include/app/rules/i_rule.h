@@ -14,6 +14,7 @@ public:
     virtual std::string getId() const = 0;
     virtual std::string getName() const = 0;
     virtual std::string getType() const = 0;
+    virtual std::string getCameraId() const = 0;
     virtual bool isEnabled() const = 0;
     virtual void setEnabled(bool enabled) = 0;
 

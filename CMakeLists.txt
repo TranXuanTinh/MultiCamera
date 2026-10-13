@@ -13,6 +13,7 @@ else()
 endif()
 
 # Build Options
+option(ENABLE_DEEPSTREAM  "Enable NVIDIA DeepStream SDK multi-camera acceleration" OFF)
 option(ENABLE_JETSON_CUDA "Enable CUDA & TensorRT hardware acceleration" OFF)
 option(ENABLE_PAHO_MQTT   "Link Eclipse Paho MQTT C client" OFF)
 option(ENABLE_SQLITE3     "Link SQLite3 database engine" OFF)
@@ -51,6 +52,7 @@ set(SOURCES
     src/service/log_service.cpp
 
     # Jetson HAL
+    src/hal/jetson/jetson_deepstream_hal.cpp
     src/hal/jetson/jetson_camera_hal.cpp
     src/hal/jetson/jetson_gpu_hal.cpp
     src/hal/jetson/jetson_network_hal.cpp
@@ -65,6 +67,34 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 
 # Conditional Dependencies
 set(EXTRA_LIBS "")
+
+if(ENABLE_DEEPSTREAM)
+    add_definitions(-DENABLE_DEEPSTREAM)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-video-1.0)
+    include_directories(${GST_INCLUDE_DIRS})
+    list(APPEND EXTRA_LIBS ${GST_LIBRARIES})
+
+    find_path(DEEPSTREAM_INCLUDE_DIR nvds_version.h
+        PATHS
+            /opt/nvidia/deepstream/deepstream/sources/includes
+            /opt/nvidia/deepstream/deepstream-6.0/sources/includes
+            /opt/nvidia/deepstream/deepstream-6.3/sources/includes
+            /opt/nvidia/deepstream/deepstream-5.1/sources/includes
+    )
+    if(DEEPSTREAM_INCLUDE_DIR)
+        include_directories(${DEEPSTREAM_INCLUDE_DIR})
+    endif()
+    find_library(NVDS_META_LIB nvds_meta
+        PATHS
+            /opt/nvidia/deepstream/deepstream/lib
+            /opt/nvidia/deepstream/deepstream-6.0/lib
+            /opt/nvidia/deepstream/deepstream-6.3/lib
+    )
+    if(NVDS_META_LIB)
+        list(APPEND EXTRA_LIBS ${NVDS_META_LIB})
+    endif()
+endif()
 
 if(ENABLE_JETSON_CUDA)
     add_definitions(-DENABLE_JETSON_CUDA)

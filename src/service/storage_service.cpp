@@ -45,6 +45,7 @@ void StorageService::createTables() {
         "CREATE TABLE IF NOT EXISTS detections ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "  camera_id TEXT NOT NULL DEFAULT 'cam_0',"
         "  frame_id INTEGER NOT NULL,"
         "  track_id INTEGER,"
         "  class_name TEXT NOT NULL,"
@@ -60,6 +61,7 @@ void StorageService::createTables() {
     hal_.execute(
         "CREATE TABLE IF NOT EXISTS alerts ("
         "  id TEXT PRIMARY KEY,"
+        "  camera_id TEXT NOT NULL DEFAULT 'cam_0',"
         "  rule_id TEXT NOT NULL,"
         "  rule_name TEXT NOT NULL,"
         "  severity TEXT NOT NULL,"
@@ -72,12 +74,18 @@ void StorageService::createTables() {
 
     hal_.execute("CREATE INDEX IF NOT EXISTS idx_det_timestamp ON detections(timestamp);");
     hal_.execute("CREATE INDEX IF NOT EXISTS idx_det_track ON detections(track_id);");
+    hal_.execute("CREATE INDEX IF NOT EXISTS idx_det_camera ON detections(camera_id);");
 }
 
 void StorageService::recordDetection(uint64_t frame_id, const TrackedObject& obj) {
+    recordDetection(obj.camera_id.empty() ? "cam_0" : obj.camera_id, frame_id, obj);
+}
+
+void StorageService::recordDetection(const std::string& camera_id, uint64_t frame_id, const TrackedObject& obj) {
     if (!config_.enabled) return;
 
     DetRecord rec;
+    rec.camera_id = camera_id;
     rec.frame_id = frame_id;
     rec.track_id = obj.track_id;
     rec.class_name = obj.det.class_name;
@@ -94,9 +102,11 @@ void StorageService::recordDetection(uint64_t frame_id, const TrackedObject& obj
 void StorageService::recordAlert(const Alert& alert) {
     if (!config_.enabled) return;
 
+    std::string cam_id = alert.camera_id.empty() ? "cam_0" : alert.camera_id;
     std::ostringstream ss;
-    ss << "INSERT INTO alerts (id, rule_id, rule_name, severity, message, track_id, class_name) VALUES ("
+    ss << "INSERT INTO alerts (id, camera_id, rule_id, rule_name, severity, message, track_id, class_name) VALUES ("
        << "'" << alert.id << "', "
+       << "'" << cam_id << "', "
        << "'" << alert.rule_id << "', "
        << "'" << alert.rule_name << "', "
        << "'" << alert.severity << "', "
@@ -137,7 +147,8 @@ void StorageService::flushQueue() {
     hal_.beginTransaction();
     for (const DetRecord& rec : batch) {
         std::ostringstream ss;
-        ss << "INSERT INTO detections (frame_id, track_id, class_name, class_id, confidence, bbox_x, bbox_y, bbox_w, bbox_h) VALUES ("
+        ss << "INSERT INTO detections (camera_id, frame_id, track_id, class_name, class_id, confidence, bbox_x, bbox_y, bbox_w, bbox_h) VALUES ("
+           << "'" << rec.camera_id << "', "
            << rec.frame_id << ", "
            << rec.track_id << ", '"
            << rec.class_name << "', "

@@ -40,6 +40,8 @@ struct BBox {
 struct Frame {
     cv::Mat image;
     uint64_t frame_id{0};
+    std::string camera_id{"cam_0"};
+    int source_id{0};
     std::chrono::steady_clock::time_point timestamp;
     int width{0};
     int height{0};
@@ -50,6 +52,8 @@ struct Detection {
     float confidence{0.0f};
     int class_id{-1};
     std::string class_name;
+    std::string camera_id{"cam_0"};
+    int source_id{0};
 };
 
 // ============================================================================
@@ -72,6 +76,8 @@ struct TrackedObject {
     int age{0};          // Total frames since creation
     int hits{0};         // Consecutive matched detections
     int time_since_update{0};
+    std::string camera_id{"cam_0"};
+    int source_id{0};
 };
 
 // ============================================================================
@@ -80,6 +86,8 @@ struct TrackedObject {
 
 struct Alert {
     std::string id;
+    std::string camera_id{"cam_0"};
+    int source_id{0};
     std::string rule_id;
     std::string rule_name;
     std::string severity;   // "info", "medium", "high", "critical"
@@ -90,6 +98,9 @@ struct Alert {
 
 struct PipelineResult {
     uint64_t frame_id{0};
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+    uint32_t batch_size{1};
     float inference_ms{0.0f};
     float fps{0.0f};
     std::vector<TrackedObject> objects;
@@ -112,6 +123,42 @@ struct HealthStatus {
 // ============================================================================
 // Configuration Data Objects
 // ============================================================================
+
+struct CameraSourceConfig {
+    std::string id{"cam_0"};
+    std::string name{"Camera 0"};
+    std::string type{"csi"};         // "csi" | "usb" | "rtsp" | "file"
+    std::string uri{"/dev/video0"};  // Device path, RTSP URL, or file path
+    int sensor_id{0};               // For Jetson CSI camera
+    int flip_method{0};             // 0=none, 2=rotate-180
+    int width{1280};
+    int height{720};
+    int fps{30};
+    bool enabled{true};
+    int reconnect_interval_sec{5};
+};
+
+struct DeepStreamConfig {
+    int batch_size{2};
+    int batched_push_timeout_us{40000}; // 40ms timeout for frame batching
+    int muxer_width{1280};
+    int muxer_height{720};
+    std::string pgie_config_file{"config/deepstream_pgie_config.txt"};
+    std::string tracker_config_file{"config/deepstream_tracker_config.txt"};
+    bool enable_tiler{true};
+    int tiler_rows{1};
+    int tiler_cols{2};
+    int tiler_width{1280};
+    int tiler_height{720};
+    bool enable_osd{true};
+    std::string sink_type{"fakesink"}; // "fakesink" | "eglglessink" | "rtsp"
+    bool drop_frame_interval{false};
+};
+
+struct MultiCameraConfig {
+    std::vector<CameraSourceConfig> cameras;
+    DeepStreamConfig deepstream;
+};
 
 struct CameraConfig {
     std::string type{"csi"};

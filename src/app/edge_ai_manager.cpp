@@ -1,6 +1,7 @@
 #include "app/edge_ai_manager.h"
 
 // Mock HALs
+#include "hal/mock/mock_deepstream_hal.h"
 #include "hal/mock/mock_camera_hal.h"
 #include "hal/mock/mock_gpu_hal.h"
 #include "hal/mock/mock_network_hal.h"
@@ -9,6 +10,7 @@
 #include "hal/mock/mock_watchdog_hal.h"
 
 // Concrete Jetson HALs
+#include "hal/jetson/jetson_deepstream_hal.h"
 #include "hal/jetson/jetson_camera_hal.h"
 #include "hal/jetson/jetson_gpu_hal.h"
 #include "hal/jetson/jetson_network_hal.h"
@@ -37,21 +39,23 @@ EdgeAIManager::~EdgeAIManager() {
 
 void EdgeAIManager::createHal(bool use_mock_hal) {
     if (use_mock_hal) {
-        LogService::info("Instantiating MOCK Hardware Abstraction Layer (Host PC Test Mode)...");
-        camera_hal_   = std::make_unique<hal::MockCameraHAL>();
-        gpu_hal_      = std::make_unique<hal::MockGpuHAL>();
-        network_hal_  = std::make_unique<hal::MockNetworkHAL>();
-        storage_hal_  = std::make_unique<hal::MockStorageHAL>();
-        sensor_hal_   = std::make_unique<hal::MockSensorHAL>();
-        watchdog_hal_ = std::make_unique<hal::MockWatchdogHAL>();
+        LogService::info("Instantiating MOCK DeepStream & Hardware Layer (Multi-Camera Host Simulation Mode)...");
+        deepstream_hal_ = std::make_unique<hal::MockDeepStreamHAL>();
+        camera_hal_     = std::make_unique<hal::MockCameraHAL>();
+        gpu_hal_        = std::make_unique<hal::MockGpuHAL>();
+        network_hal_    = std::make_unique<hal::MockNetworkHAL>();
+        storage_hal_    = std::make_unique<hal::MockStorageHAL>();
+        sensor_hal_     = std::make_unique<hal::MockSensorHAL>();
+        watchdog_hal_   = std::make_unique<hal::MockWatchdogHAL>();
     } else {
-        LogService::info("Instantiating JETSON Hardware Abstraction Layer (Production Mode)...");
-        camera_hal_   = std::make_unique<hal::JetsonCameraHAL>();
-        gpu_hal_      = std::make_unique<hal::JetsonGpuHAL>();
-        network_hal_  = std::make_unique<hal::JetsonNetworkHAL>();
-        storage_hal_  = std::make_unique<hal::JetsonStorageHAL>();
-        sensor_hal_   = std::make_unique<hal::JetsonSensorHAL>();
-        watchdog_hal_ = std::make_unique<hal::JetsonWatchdogHAL>();
+        LogService::info("Instantiating JETSON DeepStream & Hardware Layer (Production Mode)...");
+        deepstream_hal_ = std::make_unique<hal::JetsonDeepStreamHAL>();
+        camera_hal_     = std::make_unique<hal::JetsonCameraHAL>();
+        gpu_hal_        = std::make_unique<hal::JetsonGpuHAL>();
+        network_hal_    = std::make_unique<hal::JetsonNetworkHAL>();
+        storage_hal_    = std::make_unique<hal::JetsonStorageHAL>();
+        sensor_hal_     = std::make_unique<hal::JetsonSensorHAL>();
+        watchdog_hal_   = std::make_unique<hal::JetsonWatchdogHAL>();
     }
 }
 
@@ -64,8 +68,12 @@ void EdgeAIManager::createServices() {
     storage_svc_   = std::make_unique<StorageService>(*storage_hal_);
     health_svc_    = std::make_unique<HealthService>(*sensor_hal_, *watchdog_hal_, *event_bus_);
 
-    pipeline_    = std::make_unique<Pipeline>(*camera_svc_, *inference_svc_, *tracker_svc_);
+    pipeline_    = std::make_unique<Pipeline>(*deepstream_hal_);
     rule_engine_ = std::make_unique<RuleEngine>(*event_bus_);
+
+    pipeline_->setResultCallback([this](const PipelineResult& result) {
+        onPipelineResult(result);
+    });
 }
 
 void EdgeAIManager::wireEventBus() {
@@ -77,7 +85,7 @@ void EdgeAIManager::wireEventBus() {
         mqtt_svc_->publishDetections(result, config_->getDeviceId());
 
         for (const TrackedObject& obj : result.objects) {
-            storage_svc_->recordDetection(result.frame_id, obj);
+            storage_svc_->recordDetection(result.camera_id, result.frame_id, obj);
         }
     });
 
@@ -86,7 +94,7 @@ void EdgeAIManager::wireEventBus() {
         if (!evt.data.has_value()) return;
         const Alert& alert = evt.as<Alert>();
 
-        LogService::warn("ALERT TRIGGERED: [" + alert.rule_name + "] " + alert.message);
+        LogService::warn("ALERT TRIGGERED [" + alert.camera_id + " - " + alert.rule_name + "]: " + alert.message);
         mqtt_svc_->publishAlert(alert, config_->getDeviceId());
         storage_svc_->recordAlert(alert);
     });
@@ -100,9 +108,26 @@ void EdgeAIManager::wireEventBus() {
     });
 }
 
+void EdgeAIManager::onPipelineResult(const PipelineResult& result) {
+    PipelineResult enriched = result;
+
+    // Evaluate rules on tracked objects for this specific camera
+    enriched.alerts = rule_engine_->evaluate(enriched.objects);
+
+    // Update HealthService metrics
+    health_svc_->updateInferenceMetrics(enriched.fps, enriched.inference_ms);
+
+    // Publish results to EventBus (triggers MQTT & Storage asynchronously)
+    Event evt;
+    evt.type = EventType::TRACKED_OBJECTS;
+    evt.timestamp = std::chrono::system_clock::now();
+    evt.data = enriched;
+    event_bus_->publish(std::move(evt));
+}
+
 bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal) {
     LogService::init(LogLevel::Info);
-    LogService::info("Starting Edge AI Object Detection System initialization...");
+    LogService::info("Starting Multi-Camera DeepStream Object Detection System initialization...");
 
     // 1. Load configuration
     config_ = std::make_unique<ConfigService>();
@@ -113,14 +138,22 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
     // 2. Instantiate HAL
     createHal(use_mock_hal);
 
-    // 3. Instantiate Services
+    // 3. Initialize DeepStream Pipeline HAL
+    LogService::info("Initializing DeepStream Multi-Camera Pipeline with " +
+                     std::to_string(config_->getCameras().size()) + " cameras...");
+    if (!deepstream_hal_->initialize(config_->getDeepStreamConfig(), config_->getCameras())) {
+        LogService::error("Failed to initialize DeepStream HAL pipeline");
+        return false;
+    }
+
+    // 4. Instantiate Services
     createServices();
 
-    // 4. Wire EventBus
+    // 5. Wire EventBus
     wireEventBus();
     event_bus_->start();
 
-    // 5. Initialize Storage & MQTT
+    // 6. Initialize Storage & MQTT
     if (!storage_svc_->initialize(config_->getStorageConfig())) {
         LogService::warn("Failed to initialize SQLite storage service.");
     }
@@ -129,61 +162,41 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
         LogService::warn("MQTT broker connection failed, offline queue active.");
     }
 
-    // 6. Initialize & Start Health Service
+    // 7. Initialize & Start Health Service
     if (health_svc_->initialize(config_->getHealthConfig())) {
         health_svc_->start();
     }
 
-    // 7. Load Rules
+    // 8. Load Rules
     rule_engine_->loadRulesFromConfig(config_->getRulesConfigFile());
 
-    // 8. Load Inference Model (TensorRT Engine)
-    LogService::info("Loading YOLOv8 Model & TensorRT Engine...");
-    if (!inference_svc_->loadModel(config_->getModelConfig())) {
-        LogService::error("Failed to load model engine: " + config_->getModelConfig().engine_path);
+    // 9. Start Pipeline
+    if (!pipeline_->start()) {
+        LogService::error("Failed to start Multi-Camera DeepStream Pipeline");
         return false;
     }
-    LogService::info("TensorRT Engine loaded successfully.");
-
-    // 9. Open Camera
-    LogService::info("Opening Camera Stream...");
-    if (!camera_svc_->open(config_->getCameraConfig())) {
-        LogService::error("Failed to open camera: " + config_->getCameraConfig().device);
-        return false;
-    }
-    LogService::info("Camera streaming started.");
-
-    // 10. Start Pipeline
-    pipeline_->start();
 
     initialized_ = true;
-    LogService::info("Initialization complete. System is ready.");
+    LogService::info("Initialization complete. DeepStream Multi-Camera System is ready.");
     return true;
 }
 
 void EdgeAIManager::run() {
     if (!initialized_) return;
 
-    LogService::info("Entering primary detection loop...");
+    LogService::info("Entering multi-camera detection loop...");
 
     while (!stop_requested) {
-        PipelineResult result;
-        if (pipeline_->processOneFrame(result)) {
-            // Evaluate rules on tracked objects
-            result.alerts = rule_engine_->evaluate(result.objects);
-
-            // Update HealthService metrics
-            health_svc_->updateInferenceMetrics(result.fps, result.inference_ms);
-
-            // Publish results to EventBus (triggers MQTT & Storage asynchronously)
-            Event evt;
-            evt.type = EventType::TRACKED_OBJECTS;
-            evt.timestamp = std::chrono::system_clock::now();
-            evt.data = result;
-            event_bus_->publish(std::move(evt));
+        if (!pipeline_->isDeepStream()) {
+            PipelineResult result;
+            if (pipeline_->processOneFrame(result)) {
+                onPipelineResult(result);
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
         } else {
-            // Avoid burning 100% CPU if camera has no frame
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // DeepStream executes asynchronously in GStreamer background threads
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     }
 
@@ -194,9 +207,10 @@ void EdgeAIManager::shutdown() {
     if (!initialized_) return;
     initialized_ = false;
 
-    LogService::info("Shutting down Edge AI Object Detection System gracefully...");
+    LogService::info("Shutting down Multi-Camera DeepStream System gracefully...");
 
     if (pipeline_) pipeline_->stop();
+    if (deepstream_hal_) deepstream_hal_->stop();
     if (camera_svc_) camera_svc_->close();
     if (health_svc_) health_svc_->stop();
     if (storage_svc_) storage_svc_->shutdown();
@@ -207,4 +221,3 @@ void EdgeAIManager::shutdown() {
 }
 
 } // namespace edge_ai
-

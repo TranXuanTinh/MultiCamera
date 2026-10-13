@@ -1,0 +1,32 @@
+# DeepStream Primary GIE (nvinfer) Configuration
+# Optimized for YOLOv8 Multi-Camera Object Detection on Jetson Nano / Orin / Xavier
+
+[property]
+gpu-id=0
+net-scale-factor=0.003921569793422473 # 1/255.0 normalization
+model-color-format=0                   # 0=RGB, 1=BGR, 2=GRAY
+onnx-file=/opt/jetson-ai-detect/models/yolov8n.onnx
+model-engine-file=/opt/jetson-ai-detect/models/yolov8n_b2_gpu0_fp16.engine
+labelfile-path=/opt/jetson-ai-detect/models/coco_classes.txt
+
+# Batch size matching number of camera streams
+batch-size=2
+network-mode=1                         # 0=FP32, 1=FP16, 2=INT8
+num-detected-classes=80
+interval=0                             # Infer every frame (0) or skip intervals
+gie-unique-id=1
+process-mode=1                         # 1=Primary GIE (full-frame detector)
+network-type=0                         # 0=Detector, 1=Classifier, 2=Segmentation
+cluster-mode=2                         # 2=Non-Maximum Suppression (NMS), 4=No clustering
+maintain-aspect-ratio=1                # Letterbox pad to preserve aspect ratio
+workspace-size=128                     # MB workspace for TensorRT execution
+
+# Optional custom bounding box parser for YOLO models
+# custom-lib-path=/opt/jetson-ai-detect/lib/libnvdsinfer_custom_impl_Yolo.so
+# parse-bbox-func-name=NvDsInferParseCustomYolo
+
+[class-attrs-all]
+pre-cluster-threshold=0.45
+topk=100
+nms-iou-threshold=0.50
+

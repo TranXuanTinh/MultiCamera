@@ -15,13 +15,15 @@ public:
                  cv::Point2f p1, cv::Point2f p2,
                  const std::string& direction = "both",
                  const std::string& severity = "info",
-                 const std::string& message = "Line crossed");
+                 const std::string& message = "Line crossed",
+                 const std::string& camera_id = "*");
 
     ~CountingRule() override = default;
 
     std::string getId() const override { return id_; }
     std::string getName() const override { return name_; }
     std::string getType() const override { return "line_crossing"; }
+    std::string getCameraId() const override { return camera_id_; }
     bool isEnabled() const override { return enabled_; }
     void setEnabled(bool enabled) override { enabled_ = enabled; }
 
@@ -40,6 +42,7 @@ private:
     std::string direction_;
     std::string severity_;
     std::string message_;
+    std::string camera_id_{"*"};
     bool enabled_{true};
 
     int total_count_{0};

@@ -9,10 +9,12 @@ ZoneRule::ZoneRule(const std::string& id,
                    const std::vector<cv::Point2f>& polygon_points,
                    const std::string& severity,
                    const std::string& message,
-                   int cooldown_sec)
+                   int cooldown_sec,
+                   const std::string& camera_id)
     : id_(id), name_(name), target_classes_(target_classes),
       polygon_(polygon_points), severity_(severity),
-      message_(message), cooldown_sec_(cooldown_sec) {
+      message_(message), cooldown_sec_(cooldown_sec),
+      camera_id_(camera_id) {
 }
 
 bool ZoneRule::isPointInPolygon(const cv::Point2f& pt) const {
@@ -39,6 +41,11 @@ std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& object
     }
 
     for (const TrackedObject& obj : objects) {
+        // Camera ID check: if rule specifies a camera, skip objects from other cameras
+        if (!camera_id_.empty() && camera_id_ != "*" && obj.camera_id != camera_id_) {
+            continue;
+        }
+
         // Class filter check
         bool class_matches = target_classes_.empty();
         for (const std::string& cls : target_classes_) {
@@ -57,6 +64,8 @@ std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& object
             std::ostringstream ss;
             ss << "alert-" << id_ << "-" << obj.track_id;
             a.id = ss.str();
+            a.camera_id = obj.camera_id;
+            a.source_id = obj.source_id;
             a.rule_id = id_;
             a.rule_name = name_;
             a.severity = severity_;

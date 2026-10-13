@@ -1,5 +1,5 @@
 # Low-Level Design Document (LLD)
-## Project: Embedded AI Object Detection on Jetson Nano 4GB (Yocto Linux)
+## Project: Multi-Camera Edge AI Video Analytics on Jetson with NVIDIA DeepStream SDK
 
 ---
 
@@ -15,7 +15,7 @@ struct BBox {
 
     float centerX() const { return x + w * 0.5f; }
     float centerY() const { return y + h * 0.5f; }
-    float area() const { return w * h; }
+    float area() const { return std::max(0.0f, w) * std::max(0.0f, h); }
 
     float iou(const BBox& o) const {
         float x1 = std::max(x, o.x);
@@ -29,48 +29,127 @@ struct BBox {
 };
 ```
 
-### 1.2 Tracked Object State
+### 1.2 Multi-Camera Object Detection & Tracking State
 ```cpp
+struct Detection {
+    BBox bbox;
+    float confidence{0.0f};
+    int class_id{-1};
+    std::string class_name;
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+};
+
 enum class TrackState : uint8_t { New = 0, Confirmed = 1, Lost = 2, Removed = 3 };
 
 struct TrackedObject {
     int track_id{-1};
     Detection det;
     TrackState state{TrackState::New};
-    float vx{0.0f};      // Horizontal velocity (pixels/frame)
-    float vy{0.0f};      // Vertical velocity (pixels/frame)
-    int age{0};          // Total frames since track creation
-    int hits{0};         // Total frames successfully matched
-    int time_since_update{0}; // Frames since last detection association
+    float vx{0.0f};              // Horizontal velocity (px/frame)
+    float vy{0.0f};              // Vertical velocity (px/frame)
+    int age{0};                  // Total frames since track creation
+    int hits{0};                 // Total frames matched
+    int time_since_update{0};    // Frames since last association
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+};
+```
+
+### 1.3 Multi-Camera Pipeline Result & Alerts
+```cpp
+struct PipelineResult {
+    uint64_t frame_id{0};
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+    uint32_t batch_size{1};
+    float inference_ms{0.0f};
+    float fps{0.0f};
+    std::vector<TrackedObject> objects;
+    std::vector<Alert> alerts;
+};
+
+struct Alert {
+    std::string id;
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+    std::string rule_id;
+    std::string rule_name;
+    std::string severity;   // "info", "medium", "high", "critical"
+    std::string message;
+    TrackedObject trigger;
+    std::chrono::system_clock::time_point timestamp;
 };
 ```
 
 ---
 
-## 2. Mathematical Algorithms
+## 2. DeepStream Metadata Traversal Specification
 
-### 2.1 Letterbox Preprocessing & Box Rescaling
-To maintain the aspect ratio of a $1280 \times 720$ frame when resizing to the model's $640 \times 640$ input:
-$$\text{scale} = \min\left(\frac{640}{1280}, \frac{640}{720}\right) = \min(0.5, 0.888) = 0.5$$
-$$\text{new\_w} = 1280 \times 0.5 = 640, \quad \text{new\_h} = 720 \times 0.5 = 360$$
-$$\text{pad\_x} = \frac{640 - 640}{2} = 0, \quad \text{pad\_y} = \frac{640 - 360}{2} = 140$$
+Inside the GStreamer Pad Probe callback (`GST_PAD_PROBE_TYPE_BUFFER`), zero-copy metadata traversal is performed via DeepStream C APIs:
 
-**Inverse Rescaling Formula (Postprocessing)**:
-For any bounding box $(x_{model}, y_{model}, w_{model}, h_{model})$ produced by YOLOv8:
-$$x_{orig} = \frac{x_{model} - \text{pad\_x}}{\text{scale}}, \quad y_{orig} = \frac{y_{model} - \text{pad\_y}}{\text{scale}}$$
-$$w_{orig} = \frac{w_{model}}{\text{scale}}, \quad h_{orig} = \frac{h_{model}}{\text{scale}}$$
+```cpp
+void JetsonDeepStreamHAL::handlePadProbe(GstBuffer* buf) {
+    // 1. Retrieve top-level batch metadata
+    NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+    if (!batch_meta) return;
 
-### 2.2 YOLOv8 Output Decoding & Fast NMS
-* Raw tensor shape: $[1, 84, 8400]$ (where $84 = 4 \text{ box coords} + 80 \text{ classes}$, and $8400 \text{ anchor points}$).
-* Transpose on host or GPU kernel: $[8400, 84]$.
-* For each anchor $i \in [0, 8399]$:
-  1. Find maximum score $\text{max\_score} = \max_{c \in [0, 79]} \text{scores}[c]$.
-  2. If $\text{max\_score} < 0.45$, discard immediately.
-  3. Decode box: $(x_c, y_c, w, h) \to (x = x_c - w/2, y = y_c - h/2, w, h)$.
-  4. Perform greedy Non-Maximum Suppression (IoU threshold $0.50$).
+    // 2. Iterate across frames in the current batch
+    for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame != nullptr; l_frame = l_frame->next) {
+        NvDsFrameMeta* frame_meta = reinterpret_cast<NvDsFrameMeta*>(l_frame->data);
+        if (!frame_meta) continue;
 
-### 2.3 Ray-Casting Polygon Point-in-Polygon (Zone Rule)
-To test if point $(x, y)$ is inside a polygon $P = [v_0, v_1, \dots, v_{n-1}]$:
+        int src_id = frame_meta->source_id;
+        std::string cam_id = source_id_to_cam_id_[src_id];
+
+        PipelineResult res;
+        res.camera_id  = cam_id;
+        res.source_id  = src_id;
+        res.frame_id   = frame_meta->frame_num;
+        res.batch_size = batch_meta->num_frames_in_batch;
+        res.fps        = 30.0f;
+
+        // 3. Iterate across detected & tracked objects within the frame
+        for (NvDsMetaList* l_obj = frame_meta->obj_meta_list; l_obj != nullptr; l_obj = l_obj->next) {
+            NvDsObjectMeta* obj_meta = reinterpret_cast<NvDsObjectMeta*>(l_obj->data);
+            if (!obj_meta) continue;
+
+            TrackedObject tobj;
+            tobj.camera_id = cam_id;
+            tobj.source_id = src_id;
+            tobj.track_id  = static_cast<int>(obj_meta->object_id);
+            tobj.state     = TrackState::Confirmed;
+
+            tobj.det.camera_id  = cam_id;
+            tobj.det.source_id  = src_id;
+            tobj.det.class_id   = obj_meta->class_id;
+            tobj.det.confidence = obj_meta->confidence;
+            if (obj_meta->obj_label) {
+                tobj.det.class_name = obj_meta->obj_label;
+            }
+
+            tobj.det.bbox.x = obj_meta->rect_params.left;
+            tobj.det.bbox.y = obj_meta->rect_params.top;
+            tobj.det.bbox.w = obj_meta->rect_params.width;
+            tobj.det.bbox.h = obj_meta->rect_params.height;
+
+            res.objects.push_back(tobj);
+        }
+
+        // 4. Invoke user callback (Thread-safe dispatch)
+        if (cb_) {
+            cb_(res);
+        }
+    }
+}
+```
+
+---
+
+## 3. Mathematical Algorithms
+
+### 3.1 Ray-Casting Polygon Point-in-Polygon (Zone Rule)
+Determines whether point $(x, y)$ is enclosed within an arbitrary $n$-vertex polygon $P = [v_0, v_1, \dots, v_{n-1}]$:
 ```cpp
 bool isPointInsidePolygon(const cv::Point2f& pt, const std::vector<cv::Point2f>& poly) {
     bool inside = false;
@@ -85,14 +164,20 @@ bool isPointInsidePolygon(const cv::Point2f& pt, const std::vector<cv::Point2f>&
 }
 ```
 
+### 3.2 2D Vector Cross-Product (Line Crossing Counter)
+Determines which side of directed segment $\vec{AB}$ point $C$ lies on:
+$$\text{crossProduct}(A, B, C) = (B_x - A_x) \times (C_y - A_y) - (B_y - A_y) \times (C_x - A_x)$$
+* If $\text{sign}(\text{crossProduct}_{t-1}) \neq \text{sign}(\text{crossProduct}_t)$, the object crossed the tripwire during the frame transition.
+
 ---
 
-## 3. SQLite Local Storage Schema
+## 4. SQLite Multi-Camera Storage Schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS detections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    camera_id TEXT NOT NULL DEFAULT 'cam_0',
     frame_id INTEGER NOT NULL,
     track_id INTEGER,
     class_name TEXT NOT NULL,
@@ -106,10 +191,11 @@ CREATE TABLE IF NOT EXISTS detections (
 
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL DEFAULT 'cam_0',
     rule_id TEXT NOT NULL,
     rule_name TEXT NOT NULL,
     severity TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     message TEXT NOT NULL,
     track_id INTEGER,
     class_name TEXT
@@ -117,10 +203,11 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 CREATE INDEX IF NOT EXISTS idx_det_timestamp ON detections(timestamp);
 CREATE INDEX IF NOT EXISTS idx_det_track ON detections(track_id);
+CREATE INDEX IF NOT EXISTS idx_det_camera ON detections(camera_id);
 ```
 
-### Ring-Buffer Auto-Purge Policy:
-When total rows in `detections` exceed $100,000$:
+### Ring Buffer Auto-Purge Policy:
+When total rows in `detections` exceed $100,000$, delete oldest $10,000$ rows:
 ```sql
 DELETE FROM detections WHERE id IN (
     SELECT id FROM detections ORDER BY id ASC LIMIT 10000
@@ -129,20 +216,17 @@ DELETE FROM detections WHERE id IN (
 
 ---
 
-## 4. Hardware Watchdog ioctl Protocol
+## 5. Hardware Watchdog ioctl Protocol
 
-Interaction with Linux kernel driver `/dev/watchdog`:
 ```cpp
-// Open watchdog device with 60 second timeout
 int fd = open("/dev/watchdog", O_WRONLY);
 int timeout = 60;
 ioctl(fd, WDIOC_SETTIMEOUT, &timeout);
 
-// In HealthService thread, kick every 30 seconds:
+// In HealthService worker thread (every 30 seconds):
 ioctl(fd, WDIOC_KEEPALIVE, 0);
 
-// Graceful close: write 'V' before close to prevent emergency reboot
+// Graceful close: write 'V' before close to prevent emergency board reboot
 write(fd, "V", 1);
 close(fd);
 ```
-

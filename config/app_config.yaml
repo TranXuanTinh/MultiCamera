@@ -1,20 +1,63 @@
-# Edge AI Object Detection Runtime Configuration
-# Target: NVIDIA Jetson Nano 4GB (JetPack 4.6.x / Yocto Linux)
+# Edge AI Multi-Camera DeepStream Runtime Configuration
+# Target: NVIDIA Jetson Nano / Orin / Xavier (JetPack / DeepStream SDK / Yocto Linux)
 
 system:
   device_id: "jetson-nano-001"
-  device_name: "Edge Vision Node 1"
+  device_name: "Multi-Camera Edge Vision Node"
   log_level: "info"             # trace | debug | info | warn | error
   log_file: "/var/log/jetson-ai-detect/app.log"
 
+# Multi-Camera Stream Sources (Heterogeneous: CSI, RTSP, USB, File)
+cameras:
+  - id: "cam_01"
+    name: "Front Gate (CSI Camera)"
+    type: "csi"                 # "csi" | "usb" | "rtsp" | "file"
+    uri: "/dev/video0"
+    sensor_id: 0
+    flip_method: 0              # 0=none, 2=rotate-180
+    width: 1280
+    height: 720
+    fps: 30
+    enabled: true
+    reconnect_interval_sec: 5
+
+  - id: "cam_02"
+    name: "Loading Dock (RTSP IP Camera)"
+    type: "rtsp"                # "csi" | "usb" | "rtsp" | "file"
+    uri: "rtsp://192.168.1.100:554/live/stream1"
+    sensor_id: 1
+    flip_method: 0
+    width: 1280
+    height: 720
+    fps: 30
+    enabled: true
+    reconnect_interval_sec: 5
+
+# DeepStream Pipeline Architecture Configuration
+deepstream:
+  batch_size: 2                 # Number of concurrent camera streams
+  batched_push_timeout_us: 40000 # 40ms muxer timeout (25 fps sync)
+  muxer_width: 1280             # nvstreammux output buffer width
+  muxer_height: 720             # nvstreammux output buffer height
+  pgie_config: "/opt/jetson-ai-detect/config/deepstream_pgie_config.txt"
+  tracker_config: "/opt/jetson-ai-detect/config/deepstream_tracker_config.txt"
+  enable_tiler: true            # Composite multi-stream tiled display
+  tiler_rows: 1
+  tiler_cols: 2
+  tiler_width: 1280
+  tiler_height: 720
+  enable_osd: true              # On-screen display with bounding boxes and labels
+  sink_type: "fakesink"         # "fakesink" (headless edge) | "eglglessink" (HDMI display) | "rtsp"
+
+# Legacy single camera fallback (used when running without DeepStream)
 camera:
-  type: "csi"                   # "csi" | "usb" | "file"
+  type: "csi"
   device: "/dev/video0"
   width: 1280
   height: 720
   fps: 30
   csi_sensor_id: 0
-  csi_flip_method: 0            # 0=none, 2=rotate-180
+  csi_flip_method: 0
   reconnect_interval_sec: 5
 
 model:
@@ -59,4 +102,3 @@ health:
 
 rules:
   config_file: "/opt/jetson-ai-detect/config/rules.yaml"
-

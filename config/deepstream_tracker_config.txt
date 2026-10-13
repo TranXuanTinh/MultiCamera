@@ -1,0 +1,20 @@
+# DeepStream Multi-Stream Object Tracker (nvtracker) Configuration
+# Hardware-accelerated multi-camera tracking (NvDCF / ByteTrack / DeepSORT)
+
+[tracker]
+enable-batch-process=1                 # Process all camera channels in single batch
+tracker-width=640
+tracker-height=384
+gpu-id=0
+
+# Low-level tracking library (NvDCF high performance profile)
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml
+
+# Re-identification & Tracking Parameters
+enable-past-frame=0                    # Set to 1 if historical trajectories are needed
+display-tracking-id=1                  # Render tracking ID onto stream surface
+tracking-surface-type=0                # 0=NV12, 1=RGBA
+max-targets-per-stream=150             # Maximum simultaneous tracked objects per camera
+min-confidence=0.40                    # Minimum detector confidence required to associate
+

@@ -1,5 +1,5 @@
 # High-Level Design Document (HLD)
-## Project: Embedded AI Object Detection on Jetson Nano 4GB (Yocto Linux)
+## Project: Multi-Camera Edge AI Video Analytics on Jetson with NVIDIA DeepStream SDK
 
 ---
 
@@ -7,17 +7,17 @@
 
 | Module | Tier | Responsibility | Primary Interactions |
 |---|---|---|---|
-| **EdgeAIManager** | App | System lifecycle, initialization, graceful shutdown, signal handling | Owns all services and HAL instances |
-| **Pipeline** | App | Per-frame synchronous flow: Capture -> Infer -> Track | Calls CameraService, InferenceService, TrackerService |
-| **RuleEngine** | App | Evaluates business rules (zone intrusion, line counting) | Receives tracked objects, publishes alerts to EventBus |
-| **CameraService** | Service | Dedicated frame capture thread, ring buffering, drop policy | Wraps `ICameraHAL`, feeds Pipeline |
-| **InferenceService** | Service | YOLOv8 pipeline: Letterbox resize, normalize, NMS | Wraps `IGpuHAL`, converts `Frame` to `Detection` vector |
-| **TrackerService** | Service | Multi-object tracking (ByteTrack): assigns persistent track IDs | Pure C++ algorithm (Kalman Filter + Hungarian) |
-| **EventBus** | Service | In-process, multi-threaded asynchronous Pub/Sub dispatcher | Decouples Pipeline from MQTT and SQLite |
-| **MqttService** | Service | Asynchronous telemetry publishing, offline queue, reconnect | Wraps `INetworkHAL`, subscribes to EventBus |
-| **StorageService** | Service | Batch writing detection & alert records to local SQLite ring buffer | Wraps `IStorageHAL`, subscribes to EventBus |
-| **HealthService** | Service | Periodic thermal monitoring, RAM/CPU stats, hardware watchdog keepalive | Wraps `ISensorHAL` & `IWatchdogHAL` |
-| **ConfigService** | Service | Loading, schema validation, and serving YAML configuration | Used by EdgeAIManager |
+| **EdgeAIManager** | App | System lifecycle, multi-camera dependency injection, signal handling, graceful shutdown | Owns HAL and Service instances, wires pad probe callbacks |
+| **Pipeline** | App | Orchestrates DeepStream pipeline execution, frame stepping, and latency/FPS aggregation | Interfaces with `IDeepStreamHAL`, invokes rule evaluation per camera |
+| **RuleEngine** | App | Evaluates business rules (zone intrusion, line counting) with per-camera isolation | Receives tracked objects tagged with `camera_id`, generates alerts to `EventBus` |
+| **IDeepStreamHAL** | HAL | Pure virtual interface abstracting multi-camera GStreamer/DeepStream pipeline | Implemented by `JetsonDeepStreamHAL` and `MockDeepStreamHAL` |
+| **JetsonDeepStreamHAL** | HAL | Production hardware pipeline: `nvstreammux` batching, `nvinfer`, `nvtracker`, pad probe | Interacts with NVIDIA driver, NVMM memory, and GStreamer plugins |
+| **MockDeepStreamHAL** | HAL | Simulates concurrent multi-camera video streams and detections on Host PC | Used for 100% test coverage and CI without Jetson hardware |
+| **EventBus** | Service | In-process, lock-free/non-blocking asynchronous Pub/Sub event dispatcher | Decouples video analytics pipeline from MQTT network and SQLite disk I/O |
+| **MqttService** | Service | Asynchronous telemetry publisher with per-camera topic routing and offline queue | Subscribes to `EventBus`, publishes JSON payloads with `camera_id` |
+| **StorageService** | Service | Local embedded database persistence with multi-camera schema and batch transactions | Subscribes to `EventBus`, writes detections and alerts to SQLite |
+| **HealthService** | Service | Periodic thermal monitoring, CPU/GPU load measurement, hardware watchdog keepalive | Interacts with `/dev/watchdog` and sysfs thermal zones |
+| **ConfigService** | Service | Parses and validates `app_config.yaml`, `rules.yaml`, and DeepStream property files | Injected into all services and HALs during initialization |
 
 ---
 
@@ -25,63 +25,73 @@
 
 ```mermaid
 flowchart TD
-    subgraph APP["App Layer"]
+    subgraph APP["App Layer (Business Logic & Orchestration)"]
         MGR["EdgeAIManager"]
-        PIPE["Pipeline"]
-        RULE["RuleEngine"]
+        PIPE["Pipeline (DeepStream Orchestrator)"]
+        RULE["RuleEngine (Per-Camera Rules)"]
     end
 
-    subgraph SERVICES["Service Layer"]
-        CAM_S["CameraService"]
-        INF_S["InferenceService"]
-        TRK_S["TrackerService"]
-        EBUS["EventBus"]
-        MQTT_S["MqttService"]
-        STOR_S["StorageService"]
-        HLT_S["HealthService"]
-        CFG_S["ConfigService"]
+    subgraph SERVICES["Service Layer (Platform-Independent Services)"]
+        EBUS["EventBus (Async Pub/Sub)"]
+        MQTT_S["MqttService (Multi-Camera Telemetry)"]
+        STOR_S["StorageService (SQLite Multi-Camera DB)"]
+        HLT_S["HealthService (Watchdog & Thermal)"]
+        CFG_S["ConfigService (YAML & DeepStream Configs)"]
     end
 
-    subgraph HALS["HAL Layer"]
-        CAM_H["ICameraHAL"]
-        GPU_H["IGpuHAL"]
-        NET_H["INetworkHAL"]
-        STR_H["IStorageHAL"]
-        SNS_H["ISensorHAL"]
-        WDG_H["IWatchdogHAL"]
+    subgraph HALS["HAL Layer (Hardware & Framework Interfaces)"]
+        DS_H["IDeepStreamHAL<br/>JetsonDeepStreamHAL / MockDeepStreamHAL"]
+        NET_H["INetworkHAL (Paho MQTT)"]
+        STR_H["IStorageHAL (SQLite3)"]
+        SNS_H["ISensorHAL (Sysfs Sensors)"]
+        WDG_H["IWatchdogHAL (/dev/watchdog)"]
     end
 
     MGR --> CFG_S
+    MGR --> DS_H
     MGR --> PIPE
     MGR --> RULE
-    PIPE --> CAM_S --> CAM_H
-    PIPE --> INF_S --> GPU_H
-    PIPE --> TRK_S
+
+    PIPE --> DS_H
+    DS_H -.->|"Pad Probe Batch Metadata"| PIPE
+    PIPE --> RULE
     PIPE --> EBUS
     RULE --> EBUS
-    
-    EBUS -.->|Async Event| MQTT_S --> NET_H
-    EBUS -.->|Async Event| STOR_S --> STR_H
+
+    EBUS -.->|"Async Detections"| MQTT_S
+    MQTT_S --> NET_H
+
+    EBUS -.->|"Async Detections"| STOR_S
+    STOR_S --> STR_H
+
+    EBUS -.->|"Async Alerts"| MQTT_S
+    EBUS -.->|"Async Alerts"| STOR_S
+
     HLT_S --> SNS_H
     HLT_S --> WDG_H
-    HLT_S -.->|Async Health| EBUS
+    HLT_S -.->|"Async Health Telemetry"| EBUS
 ```
 
 ---
 
 ## 3. Communication Patterns
 
-1. **Synchronous Direct Method Call**:
-   * Used strictly inside the time-critical frame processing pipeline:
-   * `Pipeline::processOneFrame()` -> `CameraService::grabFrame()` -> `InferenceService::detect()` -> `TrackerService::update()`.
-   * Execution time: deterministic, strictly bounded (~50ms total).
+### 3.1 Asynchronous GStreamer Pad Probe Callback
+* DeepStream runs asynchronously within native hardware GStreamer streaming threads.
+* A buffer probe (`GST_PAD_PROBE_TYPE_BUFFER`) attached to the `nvtracker` source pad intercepts batched metadata `NvDsBatchMeta`.
+* For each frame in the batch:
+  1. The probe maps `frame_meta->source_id` to `camera_id` (e.g. `source_id = 0` $\to$ `cam_01`).
+  2. Detections and track IDs are extracted into a C++ `PipelineResult`.
+  3. The probe calls `Pipeline::onDeepStreamMetadata()`, which evaluates rules for that specific camera and publishes the result to `EventBus`.
+* Execution is zero-copy with respect to video frame memory.
 
-2. **Asynchronous Decoupled Event Publishing**:
-   * Used for all telemetry, persistence, and external logging:
-   * `Pipeline` publishes `EventType::TRACKED_OBJECTS` to `EventBus` (takes < 0.02ms).
-   * `EventBus` dispatch thread distributes the event to `MqttService` and `StorageService` without slowing down the next camera frame.
+### 3.2 Non-Blocking Event Bus Distribution
+* Thread 1 or the probe thread spends $< 0.05\text{ ms}$ pushing events to the thread-safe `EventBus` queue.
+* The `EventBus` worker thread delivers events to subscribers (`MqttService` and `StorageService`) asynchronously.
+* Neither network jitter nor disk I/O ever stalls video analytics or drops camera frames.
 
-3. **Periodic Daemon Tasks**:
-   * `HealthService` executes on an independent timer thread every 30 seconds.
-   * Reads sensor temperatures, CPU/GPU utilization, and writes to `/dev/watchdog`.
-
+### 3.3 Periodic Hardware Monitoring & Watchdog
+* `HealthService` executes every 30 seconds on a dedicated timer thread:
+  1. Reads CPU/GPU utilization and core temperatures.
+  2. Kicks Linux kernel `/dev/watchdog` via `ioctl(fd, WDIOC_KEEPALIVE, 0)`.
+  3. Publishes `HealthStatus` telemetry to `EventBus`.

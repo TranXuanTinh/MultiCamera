@@ -1,159 +1,197 @@
 # 📖 Hướng Dẫn Cài Đặt & Triển Khai (Setup Guide)
-## Dự Án: Embedded AI Object Detection Trên Jetson Nano 4GB (Yocto Linux & C++17)
+## Dự Án: Multi-Camera Video Analytics Framework Dựa Trên NVIDIA DeepStream & Yocto Linux (C++17)
 
-Tài liệu này hướng dẫn chi tiết từng bước cách thiết lập phần cứng, cài đặt môi trường, biên dịch và triển khai hệ thống theo 3 kịch bản:
-1. **Kịch bản 1**: Chạy thử nghiệm và Unit Test trên **Host PC (Windows / Linux x86)** với **Mock HAL** (không cần board Jetson).
-2. **Kịch bản 2**: Biên dịch và chạy trực tiếp trên **Jetson Nano (JetPack 4.6.x / Ubuntu)** để test trước khi build Yocto.
-3. **Kịch bản 3**: Build hệ điều hành nhúng hoàn chỉnh bằng **Yocto Project (Dunfell)** và nạp vào thẻ nhớ.
+Tài liệu này hướng dẫn chi tiết từng bước cách thiết lập phần cứng đa camera, cài đặt môi trường, biên dịch và triển khai hệ thống theo 3 kịch bản:
+1. **Kịch bản 1**: Chạy thử nghiệm và Unit Test đa camera trên **Host PC (Linux x86 / Windows)** với **MockDeepStreamHAL** (không cần board Jetson hay DeepStream SDK).
+2. **Kịch bản 2**: Biên dịch và chạy native trên **NVIDIA Jetson (JetPack 4.6.x / JetPack 5.x)** với **NVIDIA DeepStream SDK** tăng tốc phần cứng (NVDEC, nvstreammux, nvinfer, nvtracker).
+3. **Kịch bản 3**: Build hệ điều hành nhúng hoàn chỉnh bằng **Yocto Project** tích hợp layer `meta-jetson-ai-detect` và nạp vào thẻ nhớ MicroSD.
 
 ---
 
-## 🔌 PHẦN 1: Thiết Lập Phần Cứng Jetson Nano 4GB (Hardware Setup)
+## 🔌 PHẦN 1: Thiết Lập Phần Cứng Đa Camera (Hardware Setup)
 
-Trước khi cấp nguồn, hãy đảm bảo các kết nối phần cứng chính xác:
+Hệ thống hỗ trợ chạy kết hợp nhiều nguồn camera đồng thời (CSI nội bộ và IP Camera RTSP qua mạng LAN):
 
 ```
-                  +-----------------------------------+
-                  |        Jetson Nano 4GB B01        |
-                  |                                   |
-[Nguồn 5V/4A] --->| J25 (Barrel Jack)                 |
-[Jumper J48]  --->| Short pin (Disable Micro-USB)     |
-[CSI Camera]  --->| J13 (CAM0 Connector - IMX219)     |
-[Quạt 5V PWM] --->| J15 (4-pin PWM Fan Header)        |
-[Mạng LAN]    --->| RJ45 Gigabit Ethernet             |
-                  +-----------------------------------+
+                   +--------------------------------------------+
+                   |            Jetson Developer Kit            |
+                   |                                            |
+[Nguồn 5V/4A DC] ->| J25 (Barrel Jack)                          |
+[Jumper J48]    -->| Nối tắt J48 (Disable Micro-USB)            |
+[Camera CSI 1]  -->| J13 (CAM0 - IMX219)                        |
+[Camera CSI 2]  -->| J49 (CAM1 - IMX219)                        |
+[Quạt 5V PWM]   -->| J15 (4-pin PWM Fan Header)                 |
+[PoE Switch LAN]-->| RJ45 Gigabit Ethernet                      |
+                   +---------------------+----------------------+
+                                         |
+                       +-----------------+-----------------+
+                       |                                   |
+              [IP Camera 1 (RTSP)]                [IP Camera 2 (RTSP)]
+              192.168.1.101:554/ch0               192.168.1.102:554/ch0
 ```
 
 ### 1. Cấu hình Nguồn 5V/4A Barrel Jack
 * **Bắt buộc**: Dùng nguồn ngoài qua cổng Barrel Jack **5V/4A DC (J25)**.
 * **Cắm Jumper J48**: Tìm header 2 chân J48 (nằm ngay dưới cổng Camera CAM0). **Nối tắt (short) 2 chân này bằng jumper 2.54mm** để ngắt nguồn cổng Micro-USB và kích hoạt cổng Barrel Jack.
-* *Lưu ý*: Nếu dùng nguồn Micro-USB 5V/2A, khi GPU chạy TensorRT FP16 sẽ lập tức sụt áp gây sập nguồn (Brownout Reset).
+* *Lưu ý*: Xử lý đa luồng camera (Multi-Stream NVDEC + TensorRT FP16) tiêu thụ từ 8W - 12W. Nguồn Micro-USB 5V/2A sẽ bị sụt áp tức thì dẫn đến treo hoặc reboot phần cứng (Brownout Reset).
 
-### 2. Kết nối Camera MIPI CSI-2 (Sony IMX219)
-* Mở khóa chốt nhựa trên cổng **J13 (CAM0)** bằng cách kéo nhẹ lên.
-* Cắm cáp ribbon của camera vào: **mặt có dải tiếp xúc màu bạc quay về phía tản nhiệt (SoC)**, mặt màu xanh quay ra ngoài cổng kết nối.
-* Đẩy chốt nhựa xuống để cố định cáp.
+### 2. Kết nối Cặp Camera MIPI CSI-2 (Dual CSI Sony IMX219)
+* **CAM0 (J13)**: Camera kênh 0 (`sensor-id=0`). Cắm cáp ribbon với mặt tiếp xúc màu bạc hướng về phía tản nhiệt (SoC).
+* **CAM1 (J49)**: Camera kênh 1 (`sensor-id=1`). Cắm cáp ribbon với mặt tiếp xúc màu bạc hướng về phía tản nhiệt.
+* Cố định chốt nhựa chắc chắn để tránh nhiễu tín hiệu MIPI CSI-2 tốc độ cao.
 
-### 3. Kết nối Quạt tản nhiệt PWM (J15)
-* Cắm quạt 4-pin 5V vào header J15. Quạt sẽ được điều khiển tự động bởi `HealthService` qua PWM kernel.
+### 3. Kết nối IP Camera RTSP qua Mạng LAN
+* Cắm cổng Gigabit Ethernet của Jetson vào Switch mạng (khuyến nghị PoE Gigabit Switch).
+* Đặt địa chỉ IP tĩnh cho Jetson và các Camera IP trong cùng dải mạng con (ví dụ: `192.168.1.0/24`).
+* Kiểm tra luồng RTSP của từng camera bằng VLC hoặc lệnh `ffplay rtsp://admin:pass@192.168.1.101:554/stream1`.
+
+### 4. Kết nối Quạt tản nhiệt PWM (J15)
+* Cắm quạt 4-pin 5V vào header J15. Quạt sẽ được điều khiển tự động bởi `HealthService` qua PWM kernel để giải nhiệt cho GPU và bộ giải mã NVDEC.
 
 ---
 
-## 💻 PHẦN 2: Kịch Bản 1 — Chạy Thử Nghiệm Trên Host PC Với Mock HAL
+## 💻 PHẦN 2: Kịch Bản 1 — Test Đa Camera Trên Host PC Với Mock HAL
 
-Kiến trúc 3 tầng cho phép bạn chạy toàn bộ logic nghiệp vụ (Pipeline, Tracker, Rule Engine, MQTT, Storage) trên máy tính xách tay cá nhân (Windows hoặc Ubuntu x86) mà không cần board Jetson.
+Kiến trúc HAL (`IDeepStreamHAL`) tách biệt hoàn toàn giữa ứng dụng và driver phần cứng. Trên máy tính xách tay cá nhân (Ubuntu x86 hoặc Windows), bạn có thể chạy mô phỏng $N$ luồng camera, kiểm thử thuật toán tracking và quy tắc phân tích mà không cần Jetson.
 
-### 1. Cài đặt công cụ cần thiết trên Host PC
+### 1. Cài đặt môi trường Host PC
 * **Ubuntu / Debian**:
   ```bash
   sudo apt-get update
-  sudo apt-get install -y build-essential cmake libopencv-dev
+  sudo apt-get install -y build-essential cmake pkg-config libopencv-dev
   ```
-* **Windows**:
-  * Cài đặt **Visual Studio 2019/2022** (với C++ Desktop Development) hoặc MinGW-w64.
-  * Cài đặt **CMake** (phiên bản $\ge$ 3.16).
-  * Cài đặt **OpenCV** (thêm `OpenCV_DIR` vào Environment Variables).
 
-### 2. Biên dịch mã nguồn & Chạy Unit Tests
-Mở terminal trong thư mục project:
+### 2. Biên dịch mã nguồn & Chạy toàn bộ Unit Tests
+Mở terminal tại thư mục gốc của project:
 ```bash
 # 1. Tạo thư mục build
-mkdir build
-cd build
+mkdir -p build && cd build
 
-# 2. Cấu hình CMake kích hoạt Unit Test
+# 2. Cấu hình CMake kích hoạt Unit Tests (Mặc định ENABLE_DEEPSTREAM=OFF trên x86)
 cmake .. -DBUILD_TESTS=ON
 
 # 3. Biên dịch chương trình
-cmake --build . --config Release
+cmake --build . --config Release -j$(nproc)
 
-# 4. Chạy kiểm thử tự động (Unit Tests)
+# 4. Chạy kiểm thử tự động (Unit Tests cho Pipeline đa luồng và RuleEngine per-camera)
 ctest --output-on-failure
 ```
+*Kết quả kiểm thử mẫu:*
+```text
+1/3 Test #1: test_pipeline ....................   Passed    0.12 sec
+2/3 Test #2: test_tracker .....................   Passed    0.05 sec
+3/3 Test #3: test_rule_engine .................   Passed    0.08 sec
 
-### 3. Chạy ứng dụng ở chế độ Mock
+100% tests passed, 0 tests failed out of 3
+```
+
+### 3. Chạy Ứng Dụng Ở Chế Độ Mock Đa Camera
 ```bash
-# Chạy với cờ --mock (HAL giả lập frame camera và tensor output của GPU)
+# Khởi động ứng dụng với cờ --mock
 ./edge-ai-manager --config ../config/app_config.yaml --mock
 ```
-*Kết quả trên màn hình:*
+*Giao diện log trên màn hình:*
 ```text
-[INFO ] Starting Edge AI Object Detection System initialization...
-[INFO ] Instantiating MOCK Hardware Abstraction Layer (Host PC Test Mode)...
-[INFO ] Loading YOLOv8 Model & TensorRT Engine...
-[INFO ] Opening Camera Stream...
-[INFO ] Camera streaming started.
-[INFO ] Initialization complete. System is ready.
-[INFO ] Entering primary detection loop...
+[INFO] Loading application configuration: ../config/app_config.yaml
+[INFO] DeepStream Multi-Camera mode enabled. Channels: 2, Batch size: 2
+[INFO] Channel 0: ID=cam_01, Type=csi, Source=0
+[INFO] Channel 1: ID=cam_02, Type=rtsp, Source=rtsp://192.168.1.101:554/stream1
+[INFO] Instantiating MOCK DeepStream HAL (Host Multi-Stream Simulation)...
+[INFO] Mock DeepStream HAL initialized with 2 camera stream channels.
+[INFO] Rule Engine loaded 2 active rules from ../config/rules.yaml
+[INFO] DeepStream batch callback registered. Starting pipeline...
+[INFO] [cam_01] PipelineResult received: Batch size 1, Detections: 2
+[INFO] [cam_02] PipelineResult received: Batch size 1, Detections: 1
 ```
 
 ---
 
-## ⚡ PHẦN 3: Kịch Bản 2 — Test Trực Tiếp Trên Jetson Nano (JetPack 4.6.x)
+## ⚡ PHẦN 3: Kịch Bản 2 — Chạy Native Trên Jetson Với DeepStream Thật
 
-Trước khi nạp Yocto, nếu bạn đang có sẵn thẻ nhớ chạy JetPack 4.6.x (Ubuntu 18.04), bạn có thể build native để test phần cứng camera thật và GPU thật:
+Khi triển khai trực tiếp trên board Jetson Nano hoặc Jetson Orin Nano đã cài sẵn NVIDIA JetPack (4.6.x hoặc 5.x) và DeepStream SDK:
 
-### 1. Chuẩn bị thư viện phụ trợ trên Jetson Nano
+### 1. Cài đặt các gói phụ trợ
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
     build-essential cmake pkg-config git \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     libsqlite3-dev libyaml-cpp-dev \
     libpaho-mqtt-dev libpaho-mqttpp-dev \
     v4l-utils
 ```
 
-### 2. Cài đặt Python & Export model YOLOv8 sang ONNX
-Chạy trên Host PC hoặc Nano:
+### 2. Chuẩn bị File Cấu Hình DeepStream (PGIE & Tracker)
+Trong thư mục `config/` đã có sẵn các file cấu hình chuẩn:
+* `config/deepstream_pgie_config.txt`: Cấu hình PGIE nvinfer (YOLOv8 INT8/FP16, batch-size = 2 hoặc 4, pad probe buffer).
+* `config/deepstream_tracker_config.txt`: Cấu hình thuật toán NVTracker (IOU / NvSORT tracker với tracking per-stream).
+* `config/app_config.yaml`: Danh sách camera nguồn:
+  ```yaml
+  cameras:
+    - id: "cam_01"
+      type: "csi"
+      source: "0"
+      width: 1280
+      height: 720
+      fps: 30
+      enabled: true
+
+    - id: "cam_02"
+      type: "rtsp"
+      source: "rtsp://192.168.1.101:554/live/ch0"
+      width: 1280
+      height: 720
+      fps: 25
+      enabled: true
+
+  deepstream:
+    enabled: true
+    batch_size: 2
+    batched_push_timeout: 40000 # 40ms timeout for nvstreammux
+    pgie_config_path: "/opt/jetson-ai-detect/config/deepstream_pgie_config.txt"
+    tracker_config_path: "/opt/jetson-ai-detect/config/deepstream_tracker_config.txt"
+  ```
+
+### 3. Tối ưu Xung Nhịp & Quạt Tản Nhiệt
 ```bash
-pip3 install ultralytics onnx
-
-# Tải và export YOLOv8 Nano sang ONNX opset 12 (tương thích TensorRT 8.2)
-python3 -c "from ultralytics import YOLO; model = YOLO('yolov8n.pt'); model.export(format='onnx', opset=12)"
-
-# Copy file yolov8n.onnx vào thư mục models/
-cp yolov8n.onnx /opt/jetson-ai-detect/models/
-```
-
-### 3. Cấu hình quạt tản nhiệt & Mode 10W
-```bash
-# Đặt chế độ 10W tối đa hiệu năng
+# Thiết lập chế độ 10W MAXN (Jetson Nano)
 sudo nvpmodel -m 0
 sudo jetson_clocks
 
-# Bật quạt tản nhiệt chạy ở 80% tốc độ
+# Bật quạt tản nhiệt chạy ở 80% công suất
 sudo sh -c 'echo 200 > /sys/devices/pwm-fan/target_pwm'
 ```
 
-### 4. Biên dịch Native trên Jetson Nano
+### 4. Biên dịch Dự Án Với Tùy Chọn DeepStream
 ```bash
-cd Object-Detection-With-Yolov8-In-Jetson-Nano
-mkdir build && cd build
+cd /path/to/MultiCamera
+mkdir -p build && cd build
 
+# Kích hoạt flag ENABLE_DEEPSTREAM để liên kết thư viện DeepStream SDK
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DENABLE_JETSON_CUDA=ON \
+    -DENABLE_DEEPSTREAM=ON \
     -DENABLE_PAHO_MQTT=ON \
     -DENABLE_SQLITE3=ON \
     -DENABLE_YAML_CPP=ON
 
+# Biên dịch song song trên 4 nhân ARM
 cmake --build . -j4
 ```
 
-### 5. Chạy thử nghiệm với Camera CSI & TensorRT thật
+### 5. Chạy Thử Nghiệm Native
 ```bash
 sudo ./edge-ai-manager --config ../config/app_config.yaml
 ```
-*Lần đầu tiên chạy, hệ thống sẽ tự động build file `yolov8n_fp16.engine` từ ONNX (mất ~5-10 phút). Các lần chạy tiếp theo sẽ nạp engine có sẵn chỉ trong 3 giây.*
+*Khi chạy lần đầu, `nvinfer` sẽ tự động biên dịch TensorRT Engine với `batch-size=2` tương ứng từ model ONNX/weights. Quá trình này mất khoảng 5–8 phút và lưu file cache `.engine` để nạp ngay tức thì trong những lần chạy sau.*
 
 ---
 
-## 📦 PHẦN 4: Kịch Bản 3 — Build Hệ Điều Hành Yocto Hoàn Chỉnh
+## 📦 PHẦN 4: Kịch Bản 3 — Build Image Yocto Linux Hoàn Chỉnh
 
-Đây là mục tiêu chính của dự án: tạo một bản phân phối Linux nhúng chuyên dụng, không có desktop UI nặng nề, khởi động trong 20 giây và tự động chạy `edge-ai-manager`.
+Xây dựng bản phân phối Linux nhúng chuyên dụng, không desktop X11, thời gian khởi động < 20 giây và tự động chạy daemon `jetson-ai-detect`.
 
-### 1. Cấu hình máy Host Build (Ubuntu 20.04 LTS x86_64)
-Cài đặt các gói BitBake yêu cầu:
+### 1. Chuẩn bị máy Host Build (Ubuntu 20.04 LTS x86_64)
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
@@ -163,25 +201,17 @@ sudo apt-get install -y \
     libegl1-mesa libsdl1.2-dev pylint3 xterm zstd liblz4-tool
 ```
 
-### 2. Tải mã nguồn Poky & Các Layer (Nhánh Dunfell 3.1 LTS)
-Tạo workspace và clone mã nguồn:
+### 2. Tải Poky và các Layer Yocto (Nhánh Dunfell 3.1 LTS)
 ```bash
 mkdir -p ~/yocto-jetson && cd ~/yocto-jetson
-
-# 1. Poky Dunfell
 git clone -b dunfell git://git.yoctoproject.org/poky
-
-# 2. meta-tegra cho L4T R32.7.x (JetPack 4.6.x)
 git clone -b dunfell-l4t-r32.7.x https://github.com/OE4T/meta-tegra.git
-
-# 3. meta-openembedded
 git clone -b dunfell https://github.com/openembedded/meta-openembedded.git
 ```
 
-### 3. Tích hợp Layer của dự án: `meta-jetson-ai-detect`
-Copy layer tùy chỉnh trong dự án vào thư mục Yocto:
+### 3. Tích hợp Layer `meta-jetson-ai-detect`
 ```bash
-cp -r /path/to/Object-Detection-With-Yolov8-In-Jetson-Nano/yocto/meta-jetson-ai-detect ~/yocto-jetson/
+cp -r /path/to/MultiCamera/yocto/meta-jetson-ai-detect ~/yocto-jetson/
 ```
 
 ### 4. Khởi tạo môi trường BitBake
@@ -191,7 +221,6 @@ source poky/oe-init-build-env build-jetson
 ```
 
 ### 5. Cấu hình `conf/bblayers.conf`
-Mở file `conf/bblayers.conf` và thêm các layer sau:
 ```bitbake
 BBLAYERS ?= " \
   ${TOPDIR}/../poky/meta \
@@ -207,82 +236,64 @@ BBLAYERS ?= " \
 ```
 
 ### 6. Cấu hình `conf/local.conf`
-Chỉnh sửa file `conf/local.conf`:
 ```bitbake
-# Đặt target machine là Jetson Nano (B01 devkit)
 MACHINE = "jetson-nano"
-
-# Chấp nhận giấy phép proprietary của NVIDIA
 LICENSE_FLAGS_WHITELIST += "commercial proprietary"
-
-# Tối ưu tải CPU khi build
 BB_NUMBER_THREADS = "8"
 PARALLEL_MAKE = "-j 8"
-
-# Bật systemd làm init manager chính
 INIT_MANAGER = "systemd"
-
-# Bật sstate cache để tăng tốc các lần build tiếp theo
 SSTATE_DIR ?= "${TOPDIR}/sstate-cache"
 DL_DIR ?= "${TOPDIR}/downloads"
 ```
 
-### 7. Tiến hành Build Image
+### 7. Tiến hành Build & Ghi Thẻ Nhớ
 ```bash
-# Build production image (Lần đầu tiên mất khoảng 6 - 12 giờ tùy CPU và mạng)
+# Build hệ điều hành nhúng
 bitbake jetson-ai-image
-```
 
-### 8. Nạp Image vào thẻ nhớ MicroSD
-Sau khi BitBake hoàn thành, file image nằm ở:
-`tmp/deploy/images/jetson-nano/jetson-ai-image-jetson-nano.tegraflash.zip` hoặc `.sdcard`.
-
-Dùng công cụ `doflash.sh` của meta-tegra hoặc ghi trực tiếp bằng `dd` / `balenaEtcher`:
-```bash
-# Nếu sinh ra file .sdcard (thay /dev/sdX bằng thẻ nhớ của bạn)
+# Ghi file image vào thẻ nhớ MicroSD (ví dụ /dev/sdX)
 sudo dd if=tmp/deploy/images/jetson-nano/jetson-ai-image-jetson-nano.sdcard of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ---
 
-## 🔍 PHẦN 5: Vận Hành & Khắc Phục Lỗi (Troubleshooting)
+## 🔍 PHẦN 5: Vận Hành & Xử Lý Sự Cố Đa Luồng Camera (Troubleshooting)
 
-Sau khi cắm thẻ nhớ và bật nguồn Jetson Nano:
-
-### 1. Kiểm tra trạng thái Daemon
-Hệ thống sẽ tự khởi động service ngầm qua systemd:
+### 1. Kiểm tra trạng thái Daemon Systemd
 ```bash
-# Kiểm tra trạng thái tiến trình
 systemctl status jetson-ai-detect.service
-
-# Xem log thời gian thực qua journald
 journalctl -u jetson-ai-detect.service -f
 ```
 
-### 2. Kiểm tra Camera CSI
-Nếu camera không hiển thị hình ảnh, test pipeline GStreamer trực tiếp bằng lệnh:
+### 2. Kiểm tra Test Độc Lập Các Luồng Camera
+* **Kiểm tra Camera CSI 0 & 1:**
+  ```bash
+  gst-launch-1.0 nvarguscamerasrc sensor-id=0 ! 'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! nvvidconv ! fakesink
+  gst-launch-1.0 nvarguscamerasrc sensor-id=1 ! 'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! nvvidconv ! fakesink
+  ```
+  *Nếu gặp lỗi `nvbuf_utils: dmabuf_fd -1` hoặc daemon bị treo, khởi động lại:*
+  ```bash
+  sudo systemctl restart nvargus-daemon
+  ```
+
+* **Kiểm tra luồng RTSP qua bộ giải mã phần cứng NVDEC:**
+  ```bash
+  gst-launch-1.0 rtspsrc location=rtsp://192.168.1.101:554/stream1 latency=100 ! rtph264depay ! h264parse ! nvv4l2decoder ! nvvidconv ! fakesink
+  ```
+
+### 3. Kiểm tra Bản Tin MQTT Theo Từng Kênh Camera
+Bắt bản tin theo từng camera hoặc wildcard:
 ```bash
-gst-launch-1.0 nvarguscamerasrc sensor-id=0 ! 'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1' ! nvvidconv ! fakesink
-```
-*Nếu báo lỗi `nvbuf_utils: dmabuf_fd -1`: Hãy khởi động lại daemon nvargus-daemon:*
-```bash
-sudo systemctl restart nvargus-daemon
+# Lắng nghe sự kiện từ tất cả các camera
+mosquitto_sub -h 127.0.0.1 -t "edge/jetson-nano-001/+/detections" -v
+
+# Lắng nghe cảnh báo vi phạm vùng/đếm người từ camera cụ thể
+mosquitto_sub -h 127.0.0.1 -t "edge/jetson-nano-001/cam_01/alerts" -v
 ```
 
-### 3. Kiểm tra MQTT Broker kết nối Cloud
-* Cài đặt Mosquitto client để bắt bản tin gửi lên broker:
+### 4. Kiểm tra Dữ Liệu SQLite Lưu Trữ
+Kiểm tra bản ghi phát hiện vật thể theo từng kênh camera:
 ```bash
-mosquitto_sub -h 127.0.0.1 -t "edge/jetson-nano-001/detections" -v
+sqlite3 /var/lib/jetson-ai-detect/detections.db \
+  "SELECT camera_id, label, confidence, timestamp FROM detections ORDER BY id DESC LIMIT 10;"
 ```
-
-### 4. Kiểm tra Database SQLite tại chỗ
-```bash
-sqlite3 /var/lib/jetson-ai-detect/detections.db "SELECT * FROM detections ORDER BY id DESC LIMIT 5;"
-```
-
-### 5. Kiểm tra Watchdog phần cứng
-```bash
-# Kiểm tra thiết bị watchdog có tồn tại không
-ls -l /dev/watchdog
-```
-*HealthService sẽ đều đặn ghi ký tự vào `/dev/watchdog` mỗi 30 giây. Nếu bạn `kill -9` tiến trình `edge-ai-manager` và systemd không restart được, sau 60 giây board Jetson sẽ tự động reboot.*

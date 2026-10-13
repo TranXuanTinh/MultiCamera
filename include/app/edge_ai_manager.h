@@ -20,6 +20,7 @@
 #include "hal/i_storage_hal.h"
 #include "hal/i_sensor_hal.h"
 #include "hal/i_watchdog_hal.h"
+#include "hal/i_deepstream_hal.h"
 
 #include <memory>
 #include <atomic>
@@ -43,11 +44,13 @@ private:
     void createHal(bool use_mock_hal);
     void createServices();
     void wireEventBus();
+    void onPipelineResult(const PipelineResult& result);
 
     // Configuration & Logging
     std::unique_ptr<ConfigService> config_;
 
     // HAL Instances
+    std::unique_ptr<hal::IDeepStreamHAL> deepstream_hal_;
     std::unique_ptr<hal::ICameraHAL> camera_hal_;
     std::unique_ptr<hal::IGpuHAL> gpu_hal_;
     std::unique_ptr<hal::INetworkHAL> network_hal_;

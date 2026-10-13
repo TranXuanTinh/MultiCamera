@@ -1,6 +1,9 @@
 SUMMARY = "Edge AI Object Detection on Jetson Nano with TensorRT and Yocto"
+SUMMARY = "Multi-Camera Edge AI Video Analytics on Jetson with DeepStream and Yocto"
 DESCRIPTION = "Production C++17 application implementing 3-layer architecture \
                for YOLOv8 real-time detection, ByteTrack tracking, and MQTT telemetry."
+               for Multi-Camera DeepStream SDK video analytics, YOLOv8 detection, \
+               NvTracker tracking, and MQTT telemetry."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
@@ -38,6 +41,7 @@ RDEPENDS_${PN} = " \
     libopencv-videoio \
     gstreamer1.0-plugins-nvarguscamerasrc \
     gstreamer1.0-plugins-nvvidconv \
+    gstreamer1.0-plugins-nvvideo4linux2 \
     paho-mqtt-c \
     sqlite3 \
     yaml-cpp \
@@ -45,6 +49,7 @@ RDEPENDS_${PN} = " \
 
 EXTRA_OECMAKE = " \
     -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_DEEPSTREAM=ON \
     -DENABLE_JETSON_CUDA=ON \
     -DENABLE_PAHO_MQTT=ON \
     -DENABLE_SQLITE3=ON \
@@ -59,6 +64,8 @@ do_install() {
     install -d ${D}/opt/jetson-ai-detect/config
     install -m 0644 ${S}/config/app_config.yaml ${D}/opt/jetson-ai-detect/config/
     install -m 0644 ${S}/config/rules.yaml ${D}/opt/jetson-ai-detect/config/
+    install -m 0644 ${S}/config/deepstream_pgie_config.txt ${D}/opt/jetson-ai-detect/config/
+    install -m 0644 ${S}/config/deepstream_tracker_config.txt ${D}/opt/jetson-ai-detect/config/
 
     install -d ${D}/opt/jetson-ai-detect/models
     install -m 0644 ${S}/models/coco_classes.txt ${D}/opt/jetson-ai-detect/models/

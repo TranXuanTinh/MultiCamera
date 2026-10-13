@@ -19,6 +19,7 @@ public:
     void shutdown();
 
     void recordDetection(uint64_t frame_id, const TrackedObject& obj);
+    void recordDetection(const std::string& camera_id, uint64_t frame_id, const TrackedObject& obj);
     void recordAlert(const Alert& alert);
 
 private:
@@ -31,6 +32,7 @@ private:
     StorageConfig config_;
 
     struct DetRecord {
+        std::string camera_id{"cam_0"};
         uint64_t frame_id{0};
         int track_id{0};
         std::string class_name;
