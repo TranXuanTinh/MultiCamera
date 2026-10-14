@@ -107,6 +107,18 @@ struct PipelineResult {
     std::vector<Alert> alerts;
 };
 
+struct CameraRuntimeMetrics {
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+    float input_fps{0.0f};
+    float processed_fps{0.0f};
+    uint64_t dropped_frames{0};
+    uint64_t last_pts{0};             // Nanosecond Presentation Time Stamp
+    float decode_latency_ms{0.0f};
+    size_t result_queue_depth{0};
+    size_t active_objects{0};
+};
+
 struct HealthStatus {
     float cpu_usage{0.0f};
     float cpu_temp{0.0f};
@@ -118,6 +130,7 @@ struct HealthStatus {
     float avg_fps{0.0f};
     float avg_latency_ms{0.0f};
     std::string status{"healthy"}; // "healthy", "warning", "critical"
+    std::vector<CameraRuntimeMetrics> camera_metrics;
 };
 
 // ============================================================================

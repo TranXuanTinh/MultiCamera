@@ -11,16 +11,16 @@ The system is decomposed into 3 distinct architectural tiers (Application, Servi
 |---|---|---|---|
 | **EdgeAIManager** | App | System lifecycle, dependency injection, service instantiation, and graceful shutdown | Owns all Service and HAL instances; routes DeepStream metadata callbacks |
 | **Pipeline** | App | Coordinates video analytics pipeline execution, supporting both DeepStream hardware mode and modular service mode | Interfaces with `IDeepStreamHAL` or `CameraService` + `InferenceService` + `TrackerService` |
-| **RuleEngine** | App | Evaluates spatial business rules (`ZoneRule`, `CountingRule`) with per-camera channel isolation | Receives tracked objects tagged with `camera_id`; publishes alerts to `EventBus` |
+| **RuleEngine** | App | Evaluates spatial business rules (`ZoneRule`, `CountingRule`) with per-camera channel isolation, compound keying `[camera_id, track_id]`, and camera state resets on reconnect | Receives tracked objects tagged with `camera_id`; publishes alerts to `EventBus` |
 | **CameraService** | Service | Manages camera capture lifecycle, frame buffer retrieval, reconnect logic, and resolution setting | Wraps `ICameraHAL`; delivers frames in modular/fallback mode |
 | **InferenceService** | Service | Coordinates deep learning model inference, input scaling, GPU execution, and tensor parsing | Wraps `IGpuHAL`, `Preprocessor`, and `Postprocessor` |
 | **TrackerService** | Service | Multi-object tracking (ByteTrack algorithm) maintaining persistent object trajectories across frames | Employs `KalmanFilter` for motion prediction and `Hungarian` for bipartite matching |
 | **Preprocessor** | Service | Hardware-friendly input preprocessing: letterbox aspect-ratio padding, BGR-to-RGB, normalization ($1/255$), and CHW layout | Called by `InferenceService` before GPU inference |
 | **Postprocessor** | Service | Decodes raw YOLOv8 `(1, 84, 8400)` output tensors: score filtering, class argmax, coordinate unletterboxing, and NMS | Called by `InferenceService` after GPU inference |
-| **EventBus** | Service | In-process, non-blocking asynchronous Pub/Sub event dispatcher | Decouples video pipeline from MQTT network and SQLite disk I/O |
-| **MqttService** | Service | Asynchronous telemetry & alert publisher with per-camera topic routing and offline queue | Subscribes to `EventBus`, publishes JSON payloads via `INetworkHAL` |
-| **StorageService** | Service | Embedded database persistence with multi-camera schema and batched SQLite transactions | Subscribes to `EventBus`, writes detections and alerts via `IStorageHAL` |
-| **HealthService** | Service | Periodic thermal monitoring, CPU/GPU load measurement, and hardware watchdog keepalive | Interacts with `ISensorHAL` (sysfs) and `IWatchdogHAL` (`/dev/watchdog`) |
+| **EventBus** | Service | In-process, non-blocking asynchronous Pub/Sub event dispatcher with bounded ring buffer (256 items) | Decouples video pipeline from MQTT network and SQLite disk I/O |
+| **MqttService** | Service | Asynchronous telemetry & alert publisher with per-camera topic routing, camera telemetry metrics, and offline queue | Subscribes to `EventBus`, publishes JSON payloads via `INetworkHAL` |
+| **StorageService** | Service | Embedded database persistence with bounded RAM write queue (1000 records), multi-camera schema, and batched SQLite transactions | Subscribes to `EventBus`, writes detections and alerts via `IStorageHAL` |
+| **HealthService** | Service | Periodic thermal monitoring, CPU/GPU load, per-camera runtime metrics (`CameraRuntimeMetrics`), and hardware watchdog keepalive | Interacts with `ISensorHAL` (sysfs) and `IWatchdogHAL` (`/dev/watchdog`) |
 | **ConfigService** | Service | Parses and validates `app_config.yaml`, `rules.yaml`, and DeepStream property files | Injected into all services and HALs during system initialization |
 | **LogService** | Service | Centralized thread-safe asynchronous structured logging (`spdlog`) | Sinks to stdout, rotating log files, and systemd journal |
 | **IDeepStreamHAL** | HAL | Pure virtual interface abstracting multi-camera GStreamer/DeepStream pipeline | Implemented by `JetsonDeepStreamHAL` and `MockDeepStreamHAL` |
@@ -137,5 +137,14 @@ When running in diagnostic or single-camera mode without DeepStream:
 ### 3.4 Periodic Hardware Monitoring & Watchdog
 * `HealthService` executes every 30 seconds on a timer thread:
   1. Inspects SoC thermal zones and CPU/GPU utilization via `ISensorHAL`.
-  2. Kicks Linux kernel `/dev/watchdog` via `IWatchdogHAL` (`ioctl(fd, WDIOC_KEEPALIVE, 0)`).
-  3. Publishes `HealthStatus` events to `EventBus`.
+  2. Measures per-camera performance metrics (`CameraRuntimeMetrics`: `input_fps`, `processed_fps`, `dropped_frames`, `last_pts`, `decode_latency_ms`).
+  3. Kicks Linux kernel `/dev/watchdog` via `IWatchdogHAL` (`ioctl(fd, WDIOC_KEEPALIVE, 0)`).
+  4. Publishes enriched `HealthStatus` events to `EventBus` for multi-channel cloud telemetry.
+
+### 3.5 Safe Ordered Shutdown Lifecycle
+The system enforces an ordered 4-phase shutdown protocol:
+1. **Stop Video Ingress**: Stop GStreamer streaming and DeepStream HAL first, preventing new frames from entering the pipeline.
+2. **Drain Bounded Event Queue**: `EventBus::stop()` drains remaining in-flight events completely before stopping dispatch.
+3. **Commit Persistent State & Network Teardown**: `StorageService::shutdown()` commits batched SQLite transactions; `MqttService::disconnect()` disengages network sockets.
+4. **Hardware Watchdog Safe Release**: `HealthService::stop()` writes `'V'` to `/dev/watchdog` before closing, preventing emergency reboots during application exit.
+

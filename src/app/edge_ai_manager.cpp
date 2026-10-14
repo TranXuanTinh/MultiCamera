@@ -209,15 +209,22 @@ void EdgeAIManager::shutdown() {
 
     LogService::info("Shutting down Multi-Camera DeepStream System gracefully...");
 
+    // 1. Stop video streaming ingestion & DeepStream pipeline (stops new frame arrival)
     if (pipeline_) pipeline_->stop();
     if (deepstream_hal_) deepstream_hal_->stop();
     if (camera_svc_) camera_svc_->close();
-    if (health_svc_) health_svc_->stop();
-    if (storage_svc_) storage_svc_->shutdown();
-    if (mqtt_svc_) mqtt_svc_->disconnect();
+
+    // 2. Drain and stop bounded event bus queue (ensures all in-flight metadata is delivered to workers)
     if (event_bus_) event_bus_->stop();
 
-    LogService::info("All services terminated cleanly.");
+    // 3. Gracefully flush and shutdown worker persistence & network services
+    if (storage_svc_) storage_svc_->shutdown();
+    if (mqtt_svc_) mqtt_svc_->disconnect();
+
+    // 4. Stop health monitoring and safely close hardware watchdog
+    if (health_svc_) health_svc_->stop();
+
+    LogService::info("All services terminated cleanly in safe order.");
 }
 
 } // namespace edge_ai

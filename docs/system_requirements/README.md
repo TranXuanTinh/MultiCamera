@@ -59,7 +59,9 @@ Multi-stream DeepStream pipelines run the hardware video decoder (NVDEC), GPU Te
 ### 1.5 Storage & Persistent Data
 
 * **Operating System & Models**: MicroSD card (UHS-I U3, A2 rating, $\ge 64\text{ GB}$) or NVMe SSD (M.2 Key M via carrier adapter).
-* **SQLite Event Database**: Ring-buffer storage partitioned per camera channel (`camera_id`). Maximum DB size is capped at 500 MB with automatic FIFO purging.
+* **SQLite Event Database**: Ring-buffer storage partitioned per camera channel (`camera_id`). 
+  * In-memory write buffer bounded to $1,000$ records to eliminate heap growth during disk latency spikes.
+  * Maximum on-disk DB size is capped at 500 MB with automatic FIFO purging (deleting oldest 10,000 records when count exceeds 100,000).
 
 ---
 

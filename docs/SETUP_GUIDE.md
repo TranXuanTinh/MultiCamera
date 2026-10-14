@@ -295,5 +295,5 @@ mosquitto_sub -h 127.0.0.1 -t "edge/jetson-nano-001/cam_01/alerts" -v
 Kiểm tra bản ghi phát hiện vật thể theo từng kênh camera:
 ```bash
 sqlite3 /var/lib/jetson-ai-detect/detections.db \
-  "SELECT camera_id, label, confidence, timestamp FROM detections ORDER BY id DESC LIMIT 10;"
+  "SELECT camera_id, class_name, confidence, timestamp FROM detections ORDER BY id DESC LIMIT 10;"
 ```

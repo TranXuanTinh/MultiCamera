@@ -125,5 +125,13 @@ std::vector<Alert> RuleEngine::evaluate(const std::vector<TrackedObject>& object
     return alerts;
 }
 
+void RuleEngine::resetCameraState(const std::string& camera_id) {
+    for (const std::unique_ptr<IRule>& rule : rules_) {
+        if (rule) {
+            rule->resetCameraState(camera_id);
+        }
+    }
+}
+
 } // namespace edge_ai
 

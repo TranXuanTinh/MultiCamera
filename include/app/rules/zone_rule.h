@@ -3,6 +3,7 @@
 #include "app/rules/i_rule.h"
 #include <opencv2/core.hpp>
 #include <chrono>
+#include <map>
 
 namespace edge_ai {
 
@@ -27,6 +28,7 @@ public:
     void setEnabled(bool enabled) override { enabled_ = enabled; }
 
     std::optional<Alert> evaluate(const std::vector<TrackedObject>& objects) override;
+    void resetCameraState(const std::string& camera_id) override;
 
 private:
     bool isPointInPolygon(const cv::Point2f& pt) const;
@@ -41,7 +43,7 @@ private:
     std::string camera_id_{"*"};
     bool enabled_{true};
 
-    std::chrono::steady_clock::time_point last_alert_time_;
+    std::map<std::string, std::chrono::steady_clock::time_point> last_alert_time_per_cam_;
 };
 
 } // namespace edge_ai

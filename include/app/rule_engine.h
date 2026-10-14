@@ -18,6 +18,7 @@ public:
     void addRule(std::unique_ptr<IRule> rule);
 
     std::vector<Alert> evaluate(const std::vector<TrackedObject>& objects);
+    void resetCameraState(const std::string& camera_id);
 
     size_t getRuleCount() const { return rules_.size(); }
 

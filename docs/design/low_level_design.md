@@ -80,6 +80,32 @@ struct Alert {
     TrackedObject trigger;
     std::chrono::system_clock::time_point timestamp;
 };
+
+struct CameraRuntimeMetrics {
+    std::string camera_id{"cam_0"};
+    int source_id{0};
+    float input_fps{0.0f};
+    float processed_fps{0.0f};
+    uint64_t dropped_frames{0};
+    uint64_t last_pts{0};             // Nanosecond Presentation Time Stamp
+    float decode_latency_ms{0.0f};
+    size_t result_queue_depth{0};
+    size_t active_objects{0};
+};
+
+struct HealthStatus {
+    float cpu_usage{0.0f};
+    float cpu_temp{0.0f};
+    float gpu_usage{0.0f};
+    float gpu_temp{0.0f};
+    uint64_t ram_used_mb{0};
+    uint64_t ram_total_mb{0};
+    float disk_usage_pct{0.0f};
+    float avg_fps{0.0f};
+    float avg_latency_ms{0.0f};
+    std::string status{"healthy"}; // "healthy", "warning", "critical"
+    std::vector<CameraRuntimeMetrics> camera_metrics;
+};
 ```
 
 ---
@@ -194,14 +220,43 @@ bool isPointInsidePolygon(const cv::Point2f& pt, const std::vector<cv::Point2f>&
 }
 ```
 
+* **Per-Camera Cooldown Isolation**: Cooldown timers are tracked per camera channel to prevent one camera's alert from freezing detection on adjacent channels:
+  ```cpp
+  std::map<std::string, std::chrono::steady_clock::time_point> last_alert_time_per_cam_;
+  ```
+* **State Reset on Source Reconnect**:
+  ```cpp
+  void ZoneRule::resetCameraState(const std::string& camera_id) {
+      last_alert_time_per_cam_.erase(camera_id);
+  }
+  ```
+
 ### 4.2 2D Vector Cross-Product (`CountingRule`)
 Determines which side of directed segment $\vec{AB}$ point $C$ lies on:
 $$\text{crossProduct}(A, B, C) = (B_x - A_x) \times (C_y - A_y) - (B_y - A_y) \times (C_x - A_x)$$
 * If $\text{sign}(\text{crossProduct}_{t-1}) \neq \text{sign}(\text{crossProduct}_t)$, the object crossed the tripwire during the frame transition.
 
+* **Compound Keying (`cameraId + trackId`)**: In multi-camera DeepStream, `track_id` values are allocated per stream and may overlap across cameras. To eliminate state collision and false cross-camera counts, state is keyed by a compound pair:
+  ```cpp
+  std::map<std::pair<std::string, int>, float> previous_side_;
+  // Key: std::make_pair(obj.camera_id, obj.track_id)
+  ```
+* **Camera Reconnect Reset**: Clears tracking history when a camera drops or restarts to prevent false tripwire activations:
+  ```cpp
+  void CountingRule::resetCameraState(const std::string& camera_id) {
+      for (auto it = previous_side_.begin(); it != previous_side_.end(); ) {
+          if (it->first.first == camera_id) {
+              it = previous_side_.erase(it);
+          } else {
+              ++it;
+          }
+      }
+  }
+  ```
+
 ---
 
-## 5. SQLite Multi-Camera Storage Schema
+## 5. SQLite Multi-Camera Storage Schema & Bounded RAM Queue
 
 ```sql
 CREATE TABLE IF NOT EXISTS detections (
@@ -236,7 +291,19 @@ CREATE INDEX IF NOT EXISTS idx_det_track ON detections(track_id);
 CREATE INDEX IF NOT EXISTS idx_det_camera ON detections(camera_id);
 ```
 
-### Ring Buffer Auto-Purge Policy:
+### 5.1 Bounded RAM Queue Protection (Backpressure)
+To prevent disk write stalls from exhausting Jetson Nano's 4GB RAM, in-memory writes are bounded at 1,000 records using a FIFO ring-buffer policy:
+```cpp
+{
+    std::lock_guard<std::mutex> lock(queue_mtx_);
+    if (write_queue_.size() >= 1000) {
+        write_queue_.pop(); // Drop oldest record to protect RAM
+    }
+    write_queue_.push(std::move(rec));
+}
+```
+
+### 5.2 Ring Buffer Auto-Purge Policy (Disk Protection)
 When total rows in `detections` exceed $100,000$, delete oldest $10,000$ rows:
 ```sql
 DELETE FROM detections WHERE id IN (
@@ -256,7 +323,34 @@ ioctl(fd, WDIOC_SETTIMEOUT, &timeout);
 // In HealthService worker thread (every 30 seconds):
 ioctl(fd, WDIOC_KEEPALIVE, 0);
 
-// Graceful close: write 'V' before close to prevent emergency board reboot
+// Graceful close: write magic character 'V' before close to prevent emergency board reboot
 write(fd, "V", 1);
 close(fd);
 ```
+
+---
+
+## 7. Bounded Queue Draining & Safe Shutdown Protocol
+
+During shutdown, all in-flight metadata must be cleanly committed without blocking or triggering watchdog reboots:
+
+1. **Stop Ingress**: `pipeline_->stop()` and `deepstream_hal_->stop()` disengage GStreamer elements and detach pad probes.
+2. **Drain EventBus**: `EventBus::dispatchLoop` uses a drain-to-empty loop:
+   ```cpp
+   while (true) {
+       Event event;
+       {
+           std::unique_lock<std::mutex> lock(queue_mutex_);
+           queue_cv_.wait(lock, [this]() {
+               return !event_queue_.empty() || !running_;
+           });
+           if (!running_ && event_queue_.empty()) break;
+           event = std::move(event_queue_.front());
+           event_queue_.pop();
+       }
+       // Dispatch event to subscribers
+   }
+   ```
+3. **Flush SQLite & Disconnect MQTT**: `StorageService::shutdown()` joins the background writer thread and invokes `flushQueue()` within a transaction before closing the SQLite database handle. `MqttService::disconnect()` sends MQTT DISCONNECT packet cleanly.
+4. **Safe Watchdog Release**: `HealthService::stop()` writes `'V'` to `/dev/watchdog` before closing the file descriptor, ensuring the board does not reboot during application termination.
+

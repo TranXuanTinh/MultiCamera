@@ -56,7 +56,7 @@ void EventBus::publish(Event event) {
 }
 
 void EventBus::dispatchLoop() {
-    while (running_) {
+    while (true) {
         Event event;
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);

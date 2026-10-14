@@ -143,7 +143,7 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
 * **`TrackerService`**: Implements ByteTrack multi-object tracking associating high-confidence and low-confidence detections across consecutive frames via `KalmanFilter` and `Hungarian` solver.
 
 ### 3.3 Rule Engine Polymorphism (`IRule`)
-* Abstract rule contract with camera isolation:
+* Abstract rule contract with camera isolation and lifecycle reset:
   ```cpp
   class IRule {
   public:
@@ -151,12 +151,36 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
       virtual std::string getId() const = 0;
       virtual std::string getName() const = 0;
       virtual std::string getCameraId() const = 0; // "cam_01", "cam_02", or "*"
+      virtual bool isEnabled() const = 0;
+      virtual void setEnabled(bool enabled) = 0;
       virtual std::optional<Alert> evaluate(const std::vector<TrackedObject>& objects) = 0;
+      virtual void resetCameraState(const std::string& camera_id) = 0;
   };
   ```
 * **Concrete Rules**:
-  * `ZoneRule`: Detects polygon intrusion using Ray-Casting algorithm. Filters by `camera_id` to prevent false cross-camera alerts.
-  * `CountingRule`: Detects line crossing and tracks bidirectional flow per camera channel.
+  * `ZoneRule`: Detects polygon intrusion using Ray-Casting algorithm. Maintains isolated per-camera alert cooldown timers (`last_alert_time_per_cam_`) and resets timer state via `resetCameraState(camera_id)` on camera reconnect.
+  * `CountingRule`: Detects directional line crossing. Employs compound keying (`std::pair<std::string, int>` for `[camera_id, track_id]`) in `previous_side_` to eliminate cross-camera track ID collision, and purges tracking memory on reconnect via `resetCameraState(camera_id)`.
+
+### 3.4 Ordered Graceful Shutdown Sequence
+To prevent segmentation faults, dropped data, or unintended hardware watchdog reboots, `EdgeAIManager::shutdown()` coordinates a 4-phase safe teardown:
+```cpp
+void EdgeAIManager::shutdown() {
+    // 1. Stop video streaming ingestion & DeepStream pipeline (halts incoming frames)
+    if (pipeline_) pipeline_->stop();
+    if (deepstream_hal_) deepstream_hal_->stop();
+    if (camera_svc_) camera_svc_->close();
+
+    // 2. Drain and stop bounded event bus queue (ensures all in-flight metadata reaches workers)
+    if (event_bus_) event_bus_->stop();
+
+    // 3. Flush SQLite transactions and cleanly close MQTT connection
+    if (storage_svc_) storage_svc_->shutdown();
+    if (mqtt_svc_) mqtt_svc_->disconnect();
+
+    // 4. Stop health monitoring and safely close /dev/watchdog with magic character 'V'
+    if (health_svc_) health_svc_->stop();
+}
+```
 
 ---
 

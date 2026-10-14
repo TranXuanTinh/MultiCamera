@@ -18,15 +18,18 @@ Production-grade real-time Multi-Camera Video Analytics, Object Detection, Track
   * **Pad Probe Metadata Extraction**: High-performance, zero-overhead metadata extraction (`GST_PAD_PROBE_TYPE_BUFFER`) inspecting `NvDsBatchMeta` without copying frame pixel memory.
 * **Per-Camera Spatial Rule Engine**:
   * Multi-channel zone intrusion detection (ray-casting point-in-polygon algorithm) bound to specific camera IDs (`cam_01`, `cam_02`) or wildcard (`*`).
-  * Directional line-crossing counting with separate per-channel accumulator states.
+  * Directional line-crossing counting with compound keying `[camera_id, track_id]` preventing cross-camera ID collision.
+  * Per-camera alert cooldown and automated state purge (`resetCameraState`) upon camera reconnect.
 * **Dual-Mode Architectural Execution**:
   * **Target Jetson Mode (`ENABLE_DEEPSTREAM=ON`)**: Full NVIDIA hardware acceleration via DeepStream SDK GStreamer plugins.
   * **Host Simulation Mode (`MockDeepStreamHAL`)**: 100% functional host simulation running on standard x86 Linux / Windows without Jetson hardware or DeepStream SDK, enabling comprehensive CI/CD testing.
-* **Industrial Embedded Foundation**:
-  * Multi-topic Paho MQTT client publishing structured telemetry (`edge/<device>/<camera_id>/detections`).
-  * Embedded SQLite3 database with multi-camera indexing (`camera_id`, `source_id`).
+* **Industrial Embedded Foundation & Verified Safety**:
+  * Multi-topic Paho MQTT client publishing structured telemetry (`edge/<device>/<camera_id>/detections`) and per-camera runtime telemetry (`CameraRuntimeMetrics`).
+  * Embedded SQLite3 database with multi-camera indexing (`camera_id`, `source_id`) and bounded memory ring-buffer queue (1,000 records).
+  * Deterministic 4-phase safe shutdown order (Ingress $\to$ Queue Drain $\to$ DB/MQTT $\to$ Watchdog release `'V'`).
   * Tegra hardware watchdog integration and dynamic thermal PWM fan control.
   * Dedicated Yocto Project BSP layer (`meta-jetson-ai-detect`).
+
 
 ---
 

@@ -35,15 +35,20 @@ std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& object
     if (!enabled_) return std::nullopt;
 
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-    long long elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_alert_time_).count();
-    if (elapsed < cooldown_sec_) {
-        return std::nullopt; // Cooldown active
-    }
 
     for (const TrackedObject& obj : objects) {
         // Camera ID check: if rule specifies a camera, skip objects from other cameras
         if (!camera_id_.empty() && camera_id_ != "*" && obj.camera_id != camera_id_) {
             continue;
+        }
+
+        // Check cooldown per camera
+        auto it = last_alert_time_per_cam_.find(obj.camera_id);
+        if (it != last_alert_time_per_cam_.end()) {
+            long long elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count();
+            if (elapsed < cooldown_sec_) {
+                continue; // Cooldown active for this specific camera
+            }
         }
 
         // Class filter check
@@ -58,11 +63,11 @@ std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& object
 
         cv::Point2f center(obj.det.bbox.centerX(), obj.det.bbox.centerY());
         if (isPointInPolygon(center)) {
-            last_alert_time_ = now;
+            last_alert_time_per_cam_[obj.camera_id] = now;
 
             Alert a;
             std::ostringstream ss;
-            ss << "alert-" << id_ << "-" << obj.track_id;
+            ss << "alert-" << id_ << "-" << obj.camera_id << "-" << obj.track_id;
             a.id = ss.str();
             a.camera_id = obj.camera_id;
             a.source_id = obj.source_id;
@@ -77,6 +82,10 @@ std::optional<Alert> ZoneRule::evaluate(const std::vector<TrackedObject>& object
     }
 
     return std::nullopt;
+}
+
+void ZoneRule::resetCameraState(const std::string& camera_id) {
+    last_alert_time_per_cam_.erase(camera_id);
 }
 
 } // namespace edge_ai

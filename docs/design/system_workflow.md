@@ -105,7 +105,9 @@ Dưới đây là hành trình của 1 mẻ khung hình (batch of frames) từ k
 * **Luồng thực thi**: **Pipeline Callback $\to$ RuleEngine**
 * **Hành vi CPU**:
   * Quy tắc chỉ đánh giá các vật thể có `obj.camera_id` khớp với `rule.camera_id` (hoặc wildcard `*`).
+  * **Khóa kép (Compound Keying)**: Trạng thái bám vết trong `CountingRule` được định danh bằng cặp `[camera_id, track_id]`, triệt tiêu hoàn toàn rủi ro xung đột ID giữa các camera khác nhau. Cooldown trong `ZoneRule` được lưu riêng cho từng `camera_id`.
   * Thực thi thuật toán Ray-Casting kiểm tra xâm nhập vùng polygon và tính tích có hướng phát hiện xe vượt vạch.
+  * Tự động giải phóng trạng thái cũ qua `resetCameraState(camera_id)` khi camera rớt mạng và kết nối lại, ngăn ngừa cảnh báo ảo.
   * Nếu vi phạm, tạo đối tượng `Alert` chứa đầy đủ `camera_id`, `rule_id`, `track_id` và nhãn vi phạm.
 * **Thời gian tiêu tốn**: $\mathbf{0.1 - 0.3 \text{ ms}}$.
 
@@ -114,7 +116,8 @@ Dưới đây là hành trình của 1 mẻ khung hình (batch of frames) từ k
 ### 🟢 Bước 7: Phân Phối Bất Đồng Bộ (EventBus Dispatching)
 * **Luồng thực thi**: **Pipeline $\to$ EventBus Thread**
 * **Hành vi CPU**:
-  * Đẩy `PipelineResult` vào hàng đợi `EventBus`. Luồng xử lý video tiếp tục nhận batch mới ngay lập tức.
+  * Đẩy `PipelineResult` vào hàng đợi bounded ring-buffer của `EventBus` (tối đa 256 phần tử). Nếu hàng đợi đầy, bản ghi cũ nhất tự động bị đẩy ra để bảo vệ RAM.
+  * Luồng xử lý video tiếp tục nhận batch mới ngay lập tức mà không phải chờ I/O.
   * Luồng `EventBus` thức dậy và gọi các subscriber (`MqttService` và `StorageService`).
 * **Thời gian tiêu tốn**: $\mathbf{< 0.05 \text{ ms}}$ (không làm nghẽn luồng video).
 
@@ -123,8 +126,8 @@ Dưới đây là hành trình của 1 mẻ khung hình (batch of frames) từ k
 ### 🟢 Bước 8: Xuất Bản Telemetry Mạng & Ghi Đĩa Theo Mẻ (MQTT & SQLite)
 * **Luồng thực thi**: **MQTT Network Worker** & **Storage Writer Thread**
 * **Hành vi I/O**:
-  * **MQTT**: Tuần tự hóa JSON gắn thẻ `camera_id`, gửi gói tin QoS 1 lên topic `edge/{device_id}/detections`.
-  * **Storage**: Gom các bản ghi nhận diện và cảnh báo, mở Transaction ghi mẻ vào SQLite với bảng đã đánh chỉ mục `idx_det_camera`.
+  * **MQTT**: Tuần tự hóa JSON gắn thẻ `camera_id` kèm theo số liệu runtime độc lập của từng camera (`CameraRuntimeMetrics`), gửi gói tin QoS 1 lên broker. Hàng đợi offline giới hạn 500 thông điệp.
+  * **Storage**: Hàng đợi bộ nhớ được khống chế cứng ở mức 1,000 bản ghi. Gom bản ghi nhận diện và cảnh báo, mở Transaction ghi mẻ vào SQLite với bảng đã đánh chỉ mục `idx_det_camera`.
 * **Thời gian tiêu tốn**: Chạy hoàn toàn ngầm ở background, không ảnh hưởng đến FPS.
 
 ---

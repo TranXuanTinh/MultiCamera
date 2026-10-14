@@ -19,6 +19,7 @@ public:
     virtual void setEnabled(bool enabled) = 0;
 
     virtual std::optional<Alert> evaluate(const std::vector<TrackedObject>& objects) = 0;
+    virtual void resetCameraState(const std::string& /*camera_id*/) {}
 };
 
 } // namespace edge_ai

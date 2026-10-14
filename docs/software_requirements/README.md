@@ -87,3 +87,20 @@ All core application modules are written in ISO C++17 with clean separation into
   * Supported Brokers: Eclipse Mosquitto (edge/on-premise), EMQX, AWS IoT Core, Azure IoT Hub.
 * **Time Synchronization**:
   * Mandatory NTP synchronization (`systemd-timesyncd`) to guarantee accurate UTC / ISO 8601 timestamps across all batched camera events.
+
+---
+
+## 6. Reliability & Safety Non-Functional Requirements
+
+1. **Deterministic Bounded Memory Allocation**:
+   * All in-process queues (`EventBus`, `StorageService::write_queue_`, `MqttService::offline_queue_`) must specify hard maximum capacities to prevent unbounded heap allocation on 4GB Unified RAM.
+   * Overflow policy must be FIFO ring-buffer (drop oldest) to prioritize real-time telemetry over stale events.
+2. **Multi-Camera State Isolation**:
+   * Tracking states in spatial rules must use compound keys `[camera_id, track_id]` to prevent state corruption across asynchronous camera feeds.
+   * The system must implement camera lifecycle callbacks (`resetCameraState`) to clear historical positions upon RTSP/CSI reconnect.
+3. **Safe Shutdown Protocol**:
+   * Order of shutdown must strictly follow: halt video ingestion $\to$ drain event queue $\to$ commit SQLite transactions & disconnect MQTT $\to$ safely release `/dev/watchdog` using magic character `'V'`.
+4. **Two-Tier Telemetry Governance**:
+   * CPU/GPU/RAM metrics are governed globally at the pipeline level.
+   * `CameraRuntimeMetrics` (`input_fps`, `processed_fps`, `dropped_frames`, `last_pts`, `decode_latency_ms`, `queue_depth`, `active_objects`) must be monitored and serialized independently per camera channel.
+

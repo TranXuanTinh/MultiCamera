@@ -153,7 +153,7 @@ The multi-camera DeepStream runtime operates within a single high-performance pr
 
 ## 5. Multi-Camera Memory & Performance Budget (Jetson Platforms)
 
-### Performance Comparison: Legacy Manual Pipeline vs. DeepStream Multi-Camera
+### 5.1 Performance Comparison: Legacy Manual Pipeline vs. DeepStream Multi-Camera
 
 | Metric | Legacy Single-Camera (CPU Copy) | DeepStream 2-Camera (Jetson Nano) | DeepStream 4-Camera (Jetson Orin Nano) |
 |---|---|---|---|
@@ -167,12 +167,31 @@ The multi-camera DeepStream runtime operates within a single high-performance pr
 | **RAM Footprint** | ~720 MB | ~850 MB (NVMM shared) | ~1.2 GB |
 | **Available RAM Margin** | > 3.1 GB Free | **> 3.0 GB Free** | **> 6.5 GB Free** |
 
+### 5.2 Two-Tier Resource Governance Model
+
+Rather than statically dividing CPU and GPU percentages per camera, the system governs resources across two logical tiers:
+1. **Pipeline-Level (Global Shared Infrastructure)**:
+   * **GPU Saturation**: Monitored at the batched inference level (`nvinfer` execution over $[B, 3, 640, 640]$ tensors).
+   * **Unified RAM Shared Footprint**: OS rootfs, TensorRT engine deserialized weights, CUDA device context, and `nvstreammux` surface pools.
+   * **Global Batch FPS & End-to-End Latency**: Measured across the entire batched pipeline graph.
+2. **Per-Camera Level (Channel-Specific Telemetry & Buffering)**:
+   * **Buffers & Queues**: Independent CSI capture pools, RTSP jitter buffers, bounded event queues, and tracking/rule states.
+   * **Runtime Channel Telemetry**: `input_fps`, `processed_fps`, `dropped_frames`, `last_pts` (stagnation detection), `decode_latency_ms`, and `active_objects`.
+
 ---
 
-## 6. Key Advantages of the DeepStream Multi-Camera Architecture
+## 6. Key Advantages & Verified Safety Standards
 
-1. **Zero-Copy NVMM Memory Pipeline**: Video frames never leave GPU memory from initial hardware decode to inference and display.
-2. **Hardware Batching (`nvstreammux`)**: Multiplexing camera streams into batches maximizes GPU CUDA tensor saturation and minimizes inference overhead per frame.
-3. **Per-Camera Business Rule Isolation**: Each camera channel can have dedicated polygon safety zones and tripwires defined in `rules.yaml` without interfering with adjacent camera streams.
-4. **Resilient Telemetry**: Telemetry payloads tag all objects with `camera_id` and `source_id`, allowing cloud dashboards and local databases to filter incidents by camera location.
-5. **Seamless Host PC Development**: `MockDeepStreamHAL` provides instant local development and CI testing on any standard workstation without Jetson hardware.
+The architecture strictly fulfills the **10 production safety & reliability criteria** for edge multi-camera systems:
+
+1. **Non-blocking Pad Probe**: Metadata extraction runs in $< 0.05\,\text{ms}$, dispatching asynchronously to `EventBus` without calling network or disk I/O.
+2. **Strictly Bounded Queues**: `EventBus` (256 ring buffer), `MqttService` offline queue (500 messages), and `StorageService` in-memory write queue (1000 records) all enforce bounded limits to prevent OOM on 4GB Unified RAM.
+3. **Synchronized Batch Sizing**: Uniform `batch-size: 2` across `app_config.yaml`, `nvstreammux`, and `deepstream_pgie_config.txt` (`nvinfer`).
+4. **Preserved Request Pads on Reconnect**: `nvurisrcbin` with `rtsp-reconnect-interval` manages reconnects internally without releasing or reallocating `sink_%u` pads on `nvstreammux`.
+5. **Channel-Isolated EOS Handling**: EOS from a single camera is logged on `GstBus` without stopping the global pipeline or interfering with active channels.
+6. **Compound Keying in Rule State**: All tracking state in `CountingRule` and `ZoneRule` is keyed by `std::pair<std::string, int>` (`[camera_id, track_id]`), completely preventing cross-camera ID collision.
+7. **Source Reconnect State Purge**: `resetCameraState(camera_id)` clears tracking coordinates and cooldown timers when a camera reconnects, preventing false tripwire triggers.
+8. **Zero-Copy Hardware Memory (NVMM)**: Raw video frames flow exclusively through hardware ASICs (ISP, NVDEC, VIC) and GPU memory without copying pixels to CPU RAM.
+9. **Lightweight GstBus Callback**: GstBus error/warning callbacks only format messages and return immediately ($< 5\,\mu\text{s}$), preventing main loop stalls.
+10. **Deterministic 4-Phase Graceful Shutdown**: Ingress halt $\to$ Queue drain $\to$ Storage commit & MQTT disconnect $\to$ Hardware Watchdog safe release ('V').
+

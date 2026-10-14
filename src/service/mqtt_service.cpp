@@ -147,8 +147,28 @@ std::string MqttService::serializeHealthJson(const HealthStatus& health, const s
        << ",\"total_mb\":" << health.ram_total_mb << "},"
        << "\"disk\":{\"usage_pct\":" << health.disk_usage_pct << "},"
        << "\"performance\":{\"fps\":" << health.avg_fps
-       << ",\"latency_ms\":" << health.avg_latency_ms << "}"
-       << "}";
+       << ",\"latency_ms\":" << health.avg_latency_ms << "}";
+
+    if (!health.camera_metrics.empty()) {
+        ss << ",\"cameras\":[";
+        for (size_t i = 0; i < health.camera_metrics.size(); ++i) {
+            const auto& cm = health.camera_metrics[i];
+            if (i > 0) ss << ",";
+            ss << "{"
+               << "\"camera_id\":\"" << cm.camera_id << "\","
+               << "\"source_id\":" << cm.source_id << ","
+               << "\"input_fps\":" << cm.input_fps << ","
+               << "\"processed_fps\":" << cm.processed_fps << ","
+               << "\"dropped_frames\":" << cm.dropped_frames << ","
+               << "\"last_pts\":" << cm.last_pts << ","
+               << "\"decode_latency_ms\":" << cm.decode_latency_ms << ","
+               << "\"queue_depth\":" << cm.result_queue_depth << ","
+               << "\"active_objects\":" << cm.active_objects
+               << "}";
+        }
+        ss << "]";
+    }
+    ss << "}";
     return ss.str();
 }
 

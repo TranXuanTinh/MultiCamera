@@ -95,6 +95,9 @@ void StorageService::recordDetection(const std::string& camera_id, uint64_t fram
 
     {
         std::lock_guard<std::mutex> lock(queue_mtx_);
+        if (write_queue_.size() >= 1000) {
+            write_queue_.pop(); // Ring-buffer policy: drop oldest record to prevent unbounded growth
+        }
         write_queue_.push(std::move(rec));
     }
 }

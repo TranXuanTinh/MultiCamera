@@ -42,7 +42,8 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
         cv::Point2f center(obj.det.bbox.centerX(), obj.det.bbox.centerY());
         float current_side = crossProduct(p1_, p2_, center);
 
-        std::map<int, float>::iterator it = previous_side_.find(obj.track_id);
+        auto key = std::make_pair(obj.camera_id, obj.track_id);
+        auto it = previous_side_.find(key);
         if (it != previous_side_.end()) {
             float prev_side = it->second;
 
@@ -53,7 +54,7 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
 
                 Alert a;
                 std::ostringstream ss;
-                ss << "count-" << id_ << "-" << obj.track_id << "-" << total_count_;
+                ss << "count-" << id_ << "-" << obj.camera_id << "-" << obj.track_id << "-" << total_count_;
                 a.id = ss.str();
                 a.camera_id = obj.camera_id;
                 a.source_id = obj.source_id;
@@ -69,10 +70,20 @@ std::optional<Alert> CountingRule::evaluate(const std::vector<TrackedObject>& ob
                 return a;
             }
         }
-        previous_side_[obj.track_id] = current_side;
+        previous_side_[key] = current_side;
     }
 
     return std::nullopt;
+}
+
+void CountingRule::resetCameraState(const std::string& camera_id) {
+    for (auto it = previous_side_.begin(); it != previous_side_.end(); ) {
+        if (it->first.first == camera_id) {
+            it = previous_side_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace edge_ai

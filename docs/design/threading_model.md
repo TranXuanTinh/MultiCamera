@@ -1,41 +1,50 @@
-# Tài Liệu Thiết Kế Đa Luồng (Threading & Concurrency Model)
+# Tài Liệu Thiết Kế Đa Luồng & Quản Trị Tài Nguyên (Threading & Resource Model)
 ## Dự Án: Hệ Thống Multi-Camera AI Trên NVIDIA Jetson Bằng DeepStream SDK & C++17
 
-Tài liệu này mô tả chi tiết mô hình kiến trúc tiến trình và đa luồng (Process & Multi-threading Architecture), cơ chế đồng bộ dữ liệu (Synchronization), chính sách phân bổ CPU Core và thứ tự giải phóng luồng an toàn (Graceful Shutdown) của hệ thống đa camera.
+Tài liệu này mô tả chi tiết kiến trúc điều phối tiến trình và đa luồng (Process & Multi-threading Architecture), cơ chế ánh xạ phần cứng Jetson Nano, mô hình quản trị tài nguyên hai tầng (Two-Tier Resource Governance), và thứ tự giải phóng luồng an toàn (Graceful Shutdown) của hệ thống đa camera.
 
 ---
 
-## 1. Tổng Quan Kiến Trúc Tiến Trình & Luồng
+## 1. Bản Đồ Ánh Xạ Phần Cứng & Luồng Xử Lý Trên Jetson Nano
 
-Ứng dụng `edge-ai-manager` thực thi dưới dạng **1 Single Process (Đơn tiến trình)** nhằm tối ưu hóa bộ nhớ Unified Memory trên Jetson, kết hợp giữa **các luồng phần cứng của GStreamer/DeepStream** và **các luồng Service hướng sự kiện của C++**:
+Khác với kiến trúc x86 truyền thống, SoC NVIDIA Tegra X1 (Jetson Nano) sở hữu cấu trúc tính toán dị thể (Heterogeneous Computing) tích hợp CPU, GPU và các bộ tăng tốc phần cứng chuyên dụng trên cùng một vùng nhớ chia sẻ **Unified Memory (4GB LPDDR4)**:
 
-```mermaid
-flowchart TD
-    subgraph PROCESS["1 TIẾN TRÌNH DUY NHẤT: edge-ai-manager"]
-        direction TB
-
-        subgraph PIPELINE_THREADS["Cụm Luồng Phần Cứng DeepStream (GStreamer & Driver)"]
-            T_SRC["Source Threads (T2..N)<br/>Ingest RTSP/CSI streams song song<br/>Hardware Decode (NVDEC / Tegra ISP)<br/>Zero-copy NVMM memory push"]
-            T_MUX["StreamMux Thread (T_mux)<br/>Gom mẻ N camera thành 1 Batched Buffer<br/>Hardware Scaler (VIC) về 1280x720"]
-            T_GPU["Inference & Tracker Worker (T_gpu)<br/>TensorRT FP16 PGIE Batch Execution<br/>NvTracker Hardware Multi-Object Tracking"]
-            T_PROBE["Pad Probe Callback Thread (T_probe)<br/>Trích xuất NvDsBatchMeta zero-copy<br/>Map source_id sang camera_id<br/>Gọi C++ Pipeline Result Callback"]
-
-            T_SRC --> T_MUX --> T_GPU --> T_PROBE
-        end
-
-        subgraph APP_THREADS["Cụm Luồng Nghiệp Vụ Ứng Dụng (C++ Services)"]
-            T_MAIN["Thread 1: Main Control Thread<br/>Quản lý Lifecycle & Signal SIGINT/SIGTERM<br/>Điều phối Pipeline & Health Monitoring"]
-            T_EBUS["Thread EventBus: Dispatcher<br/>Nhận PipelineResult từ Probe Callback<br/>Phân phối bất đồng bộ tới MQTT & Storage<br/>Đảm bảo không block luồng xử lý video"]
-            T_SQL["Thread Storage: SQLite Batch Writer<br/>Gom mẻ dữ liệu có tag camera_id<br/>Ghi Transaction xuống SQLite mỗi 5s"]
-            T_MQTT["Thread MQTT: Network Worker<br/>Socket TCP/TLS publish JSON có camera_id<br/>Quản lý Offline Queue khi mất mạng"]
-            T_HLT["Thread Health & Watchdog<br/>Giám sát nhiệt độ chip, RAM, GPU load<br/>Đá phần cứng /dev/watchdog mỗi 30s"]
-        end
-
-        T_PROBE -->|"PipelineResult / Zero-Copy"| T_EBUS
-        T_EBUS -->|"Batch Data"| T_SQL
-        T_EBUS -->|"JSON Payloads"| T_MQTT
-        T_HLT -.->|"Health Status Event"| T_EBUS
-    end
+```
+Jetson Nano 4GB
+┌──────────────────────────────────────────────────────────────────────────┐
+│ CPU (Quad-core Cortex-A57 @ 1.43 GHz)                                   │
+│                                                                          │
+│ Main/GLib Loop        Source Ingestion Tasks     Business Logic Workers  │
+│ ┌────────────────┐   ┌────────────────────────┐ ┌──────────────────────┐ │
+│ │• Lifecycle Mgmt│   │• CSI driver control    │ │• RuleEngine          │ │
+│ │• GstBus Watch  │   │• RTSP/RTP Demux (x N)  │ │• MqttService (Async) │ │
+│ │• POSIX Signals │   │• Metadata Map (src->id)│ │• SQLite / Health     │ │
+│ └────────────────┘   └────────────────────────┘ └──────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Hardware Accelerators (Fixed-Function ASICs - Không chiếm CPU/GPU)       │
+│                                                                          │
+│ CSI Sensor ──► Tegra ISP       RTSP Bitstream ──► NVDEC   Scaler ──► VIC │
+│ (Demosaic, AWB, AE)            (H.264/H.265 Decode)       (Aspect Letter)│
+├──────────────────────────────────────────────────────────────────────────┤
+│ GPU (128-core Maxwell @ 921 MHz)                                         │
+│                                                                          │
+│ nvstreammux Batched Memory Surface                                       │
+│         │                                                                │
+│         ▼                                                                │
+│ TensorRT YOLO Batched Primary GIE (FP16 / INT8)                          │
+│         │                                                                │
+│         ▼                                                                │
+│ nvtracker (Multi-Stream Tracking Engine - NvDCF / NvSORT)                │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Unified RAM (4GB LPDDR4 @ 1600MHz - 25.6 GB/s)                           │
+│                                                                          │
+│ Shared System: OS, TensorRT Engine Weights, CUDA Context, Muxer Pool    │
+│                                                                          │
+│ Cam 0: CSI capture NVMM buffers + queue + source/rule state              │
+│ Cam 1: RTSP decode NVMM buffers + jitter buffer + queue + rule state     │
+│ Cam 2: RTSP decode NVMM buffers + jitter buffer + queue + rule state     │
+│ Cam N: Ingestion buffers + jitter buffer + queue + rule state            │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -44,70 +53,92 @@ flowchart TD
 
 | Nhóm Luồng | Tên Luồng | Tầng kiến trúc | Quản lý bởi | Chu kỳ / Tần số | Mức chiếm CPU | Vai trò kỹ thuật chính |
 |---|---|---|---|---|---|---|
-| **App** | **Main Thread** | App Layer | `main.cpp`<br>`EdgeAIManager::run()` | Định kỳ 50ms | < 1% | Giám sát trạng thái, bắt tín hiệu dừng `Ctrl+C` |
-| **DeepStream** | **Source Workers (1..N)** | GStreamer HAL | `nvurisrcbin` / `nvarguscamerasrc` | 30 FPS / camera | 3% – 5% / cam | Nhận gói tin RTP RTSP hoặc tín hiệu MIPI CSI, gọi phần cứng NVDEC decode |
-| **DeepStream** | **StreamMux Collector** | GStreamer HAL | `nvstreammux` | 25 – 30 batches/s | 4% – 6% | Gom $N$ frame thành 1 batched surface, kích hoạt timeout 40ms |
-| **DeepStream** | **PGIE & Tracker Worker** | GStreamer / CUDA | `nvinfer` & `nvtracker` | 25 – 30 batches/s | < 5% CPU<br>**(100% GPU)** | Đưa batch vào GPU TensorRT và bám vết đa camera NvDCF |
-| **DeepStream** | **Pad Probe Thread** | GStreamer HAL | `JetsonDeepStreamHAL::padProbeCallback` | Bất đồng bộ theo batch | 2% – 4% | Duyệt danh sách metadata `NvDsBatchMeta`, đóng gói `PipelineResult` |
-| **Service** | **EventBus Dispatcher** | Service Layer | `EventBus::dispatchLoop()` | Bất đồng bộ | < 1% | Đẩy kết quả nhận diện sang MQTT và SQLite không làm block video |
-| **Service** | **Storage Writer** | Service Layer | `StorageService::writerLoop()` | 5 giây / lần | < 1% | Ghi theo mẻ (Batch Transaction) vào bảng SQLite có index `camera_id` |
-| **Service** | **MQTT Worker** | Service / HAL | Paho MQTT C runtime | Bất đồng bộ | 1% – 2% | Quản lý socket TCP/TLS, publish telemetry kèm `camera_id` |
+| **App** | **Main Thread** | App Layer | `main.cpp`<br>`EdgeAIManager::run()` | Định kỳ 50ms | < 1% | Giám sát trạng thái, bắt tín hiệu dừng `SIGINT`/`SIGTERM` |
+| **DeepStream** | **Source Ingestion (1..N)** | GStreamer HAL | `nvurisrcbin` / `nvarguscamerasrc` | 30 FPS / camera | Tải nhẹ (I/O) | Nhận gói tin RTP RTSP hoặc tín hiệu MIPI CSI, chuyển sang phần cứng NVDEC/ISP |
+| **DeepStream** | **StreamMux Collector** | GStreamer HAL | `nvstreammux` | 25 – 30 batches/s | 3% – 5% | Gom $N$ frame thành 1 batched surface, kích hoạt timeout đồng bộ 40ms |
+| **DeepStream** | **PGIE & Tracker Worker** | GStreamer / CUDA | `nvinfer` & `nvtracker` | 25 – 30 batches/s | < 5% CPU<br>**(GPU Execute)** | Nạp batch vào GPU TensorRT và thực thi bám vết đa camera NvDCF |
+| **DeepStream** | **Pad Probe Thread** | GStreamer HAL | `JetsonDeepStreamHAL::padProbeCallback` | Bất đồng bộ theo batch | 2% – 3% | Duyệt metadata `NvDsBatchMeta` zero-copy, đóng gói `PipelineResult` |
+| **Service** | **EventBus Dispatcher** | Service Layer | `EventBus::dispatchLoop()` | Bất đồng bộ | < 1% | Hàng đợi bounded queue chuyển giao metadata sang MQTT và SQLite |
+| **Service** | **Storage Writer** | Service Layer | `StorageService::writerLoop()` | 5 giây / lần | < 1% | Ghi transaction mẻ vào bảng SQLite có index `camera_id` |
+| **Service** | **MQTT Worker** | Service / HAL | Paho MQTT C runtime | Bất đồng bộ | 1% – 2% | Quản lý socket TCP/TLS, publish telemetry theo từng `camera_id` |
 | **Service** | **Health & Watchdog** | Service Layer | `HealthService::monitorLoop()` | 30 giây / lần | < 0.5% | Đọc sysfs nhiệt độ, đá `/dev/watchdog` duy trì hệ thống |
 
 ### 2.1 Luồng Trong Chế Độ Modular Fallback Pipeline (Khi không chạy DeepStream)
 Khi ứng dụng chạy ở chế độ đơn kênh / kiểm tra độc lập dịch vụ:
 * **`CameraService`**: Quản lý luồng thu nhận ảnh tuần tự từ `ICameraHAL` (`grabFrame()`), duy trì tốc độ 30 FPS.
-* **`InferenceService`**: Thực thi quy trình tiền xử lý (`Preprocessor`), chuyển giao buffer sang `IGpuHAL::runInference()` trên GPU Stream, và giải mã tensor (`Postprocessor`).
-* **`TrackerService`**: Thực hiện cập nhật ma trận hiệp phương sai `KalmanFilter` và giải bài toán gán cặp `Hungarian` trên CPU trong thời gian $< 2\text{ ms}$ cho mỗi frame.
+* **`InferenceService`**: Thực thi tiền xử lý (`Preprocessor`), chuyển giao buffer sang `IGpuHAL::runInference()` trên GPU Stream, và giải mã tensor (`Postprocessor`).
+* **`TrackerService`**: Cập nhật ma trận hiệp phương sai `KalmanFilter` và giải bài toán gán cặp `Hungarian` trên CPU trong thời gian $< 2\text{ ms}$ cho mỗi frame.
 
 ---
 
-## 3. Cơ Chế Đồng Bộ & Trao Đổi Dữ Liệu Đa Luồng
+## 3. Triết Lý Quản Trị Tài Nguyên Hai Tầng (Two-Tier Resource Governance)
 
-### 3.1 Truyền Dữ Liệu Zero-Copy Trong DeepStream (NVMM DMA Memory)
-* **Vấn đề**: Với 2 đến 4 camera độ phân giải 720p/1080p, việc sao chép frame qua lại giữa CPU và GPU sẽ làm nghẽn bus LPDDR4 và chiếm 100% CPU.
-* **Giải pháp DeepStream**: Toàn bộ luồng từ Hardware Decode (NVDEC) $\to$ `nvstreammux` $\to$ `nvinfer` $\to$ `nvtracker` $\to$ `nvdsosd` chạy trên vùng nhớ phần cứng **NVMM (`video/x-raw(memory:NVMM)`)**.
-* Dữ liệu hình ảnh không bao giờ bị copy lên RAM CPU.
+> [!IMPORTANT]
+> **Không phân bổ cứng CPU/GPU theo tỷ lệ phần trăm tĩnh cho từng camera.**
+> Trên kiến trúc SoC Tegra chia sẻ Unified Memory và chạy batched pipeline (`nvstreammux` + `nvinfer`):
+> 1. GPU TensorRT chạy suy luận trên toàn bộ mẻ tensor $[B, 3, 640, 640]$ cùng một lúc, không thể chia cắt tĩnh 25% cho Cam 1 và 25% cho Cam 2.
+> 2. Các bộ tăng tốc phần cứng (Tegra ISP, NVDEC, VIC) hoạt động độc lập bằng vi mạch ASIC chuyên dụng, hoàn toàn không tiêu tốn chu kỳ lệnh CPU/GPU.
+> 3. Tải CPU đến từ thông lượng mạng (RTP packets) và tần suất phát sinh sự kiện logic (Rule violations), biến thiên theo ngữ cảnh thực tế.
 
-### 3.2 Bàn Giao Dữ Liệu Từ Pad Probe Sang EventBus
-* Trong Pad Probe callback, hệ thống chỉ duyệt các cấu trúc metadata nhỏ (tọa độ hộp BBox, `track_id`, `camera_id`, `confidence`).
-* Tổng dung lượng metadata của 1 frame chỉ khoảng **$< 1\text{ KB}$**.
-* Probe callback gọi `Pipeline::onDeepStreamMetadata()`, hàm này đánh giá vi phạm quy tắc (Rule Engine) và nạp `PipelineResult` vào `EventBus` trong thời gian cực ngắn ($< 0.05\text{ ms}$).
+Do đó, hệ thống áp dụng mô hình **Quản trị tài nguyên 2 tầng**:
 
-### 3.3 Tránh Nghẽn I/O Khi Có Nhiều Camera Gửi Sự Kiện Đồng Thời
-* Cả 2 hoặc 4 camera đều sinh ra sự kiện liên tục.
-* `EventBus` sử dụng hàng đợi vòng `std::queue<Event>` được bảo vệ bằng `std::mutex` và thông báo bằng `std::condition_variable`.
-* `MqttService` hỗ trợ **Rate Limiting** (giới hạn tần số publish telemetry theo cấu hình `publish_interval_ms: 100`) nhằm bảo vệ băng thông mạng.
-* `StorageService` sử dụng chế độ SQLite **WAL (Write-Ahead Logging)** và Transaction mẻ 50 dòng để triệt tiêu thời gian chờ ghi thẻ nhớ SD.
+```
+                              HAI TẦNG QUẢN TRỊ TÀI NGUYÊN
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │ 1. PIPELINE-LEVEL METRICS (Quản trị toàn cục hệ thống)                 │
+    │    • Tổng tải GPU (%) qua tegrastats / NVML                            │
+    │    • Tổng Unified RAM chiếm dụng (OS + TensorRT Weights + Buffer Pools)│
+    │    • Tần số xử lý mẻ toàn hệ thống (Pipeline Batch FPS)                │
+    │    • Độ trễ xử lý trọn vòng (End-to-end Pipeline Latency ms)           │
+    └───────────────────────────────────┬────────────────────────────────────┘
+                                        │ phân rã theo dõi
+    ┌───────────────────────────────────▼────────────────────────────────────┐
+    │ 2. PER-CAMERA RUNTIME METRICS (Quản trị độc lập theo từng cameraId)    │
+    │    • input_fps           : Tần số khung hình thực tế nhận từ nguồn     │
+    │    • processed_fps       : Tần số khung hình thực tế qua Pad Probe     │
+    │    • dropped_frames      : Khung hình bị rơi rụng (nghẽn mạng/jitter)  │
+    │    • last_pts            : Timestamp mới nhất (phát hiện cam đóng băng)│
+    │    • decode_latency_ms   : Độ trễ giải mã phần cứng NVDEC/ISP          │
+    │    • result_queue_depth  : Độ sâu hàng đợi bounded queue của kênh      │
+    │    • active_objects      : Số lượng vật thể đang được track đồng thời  │
+    │    • per-camera state    : Jitter buffer, ring buffer, bộ đếm rule     │
+    └────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 4. Phân Bổ Tải Trên Các Nhân CPU ARM
+## 4. Thứ Tự Dừng Luồng An Toàn (Graceful Shutdown Order)
 
-Trên Jetson Nano (4 nhân Cortex-A57) hoặc Jetson Orin Nano (6 nhân Cortex-A78AE):
+Để ngăn ngừa triệt để lỗi truy cập vùng nhớ rác (Segmentation Fault), rò rỉ buffer NVMM DMA, hoặc mất mát dữ liệu SQLite chưa kịp ghi đĩa, hệ thống thực thi thứ tự dừng an toàn từ **Đầu vào (Ingress) $\to$ Đầu ra (Egress) $\to$ Xử lý nền (Workers)**:
 
 ```
-[Core 0] ────────► GStreamer Source Threads (Camera 1 & 2 Demux/RTSP RTP)
-[Core 1] ────────► nvstreammux Batching + Pad Probe Metadata Extraction
-[Core 2] ────────► EventBus Dispatcher + MQTT Telemetry Network Worker
-[Core 3] ────────► SQLite Storage Batch Writer + Health Watchdog + System Daemons
+[Bước 1: DỪNG NGUỒN STREAMING]
+         │  • pipeline_->stop() gửi tín hiệu dừng tới GStreamer
+         │  • Ngắt nhận gói tin từ CSI / RTSP IP camera
+         ▼  • Chuyển trạng thái Pipeline sang GST_STATE_NULL
+[Bước 2: THÁO GỠ PAD PROBE]
+         │  • deepstream_hal_->stop() ngắt Probe Callback
+         │  • Đảm bảo không còn metadata callback nào được bắn vào App
+         ▼
+[Bước 3: DRAIN HÀNG ĐỢI BOUNDED QUEUE]
+         │  • event_bus_->stop() dừng nhận sự kiện mới
+         │  • Luồng Dispatcher xử lý nốt toàn bộ sự kiện in-flight còn lại
+         ▼  • Chờ hàng đợi rỗng hoàn toàn và join() dispatch_thread_
+[Bước 4: FLUSH & ĐÓNG DỮ LIỆU SQLITE]
+         │  • storage_svc_->shutdown() thực thi Commit transaction cuối cùng
+         ▼  • Đóng file cơ sở dữ liệu SQLite sạch sẽ, flush cache đĩa
+[Bước 5: NGẮT KẾT NỐI MQTT TELEMETRY]
+         │  • mqtt_svc_->disconnect() gửi gói tin MQTT DISCONNECT
+         ▼  • Đóng socket TCP/TLS, giải phóng bộ đệm mạng
+[Bước 6: AN TOÀN WATCHDOG & GIẢI PHÓNG TÀI NGUYÊN]
+            • health_svc_->stop() ghi ký tự 'V' vào /dev/watchdog
+            • Đóng file descriptor watchdog tránh kích hoạt reboot khẩn cấp
+            • Thu hồi toàn bộ GPU memory context và thoát tiến trình sạch sẽ
 ```
-
-Nhờ cơ chế phần cứng chuyên dụng (GPU TensorRT, NVDEC, VIC) đảm nhiệm hầu hết các tác vụ nặng, tổng tải CPU toàn hệ thống cho 2-4 camera chỉ duy trì ở mức **20% – 35%**.
 
 ---
 
-## 5. Thứ Tự Dừng Luồng An Toàn (Graceful Shutdown Order)
+## 5. Cơ Chế Bounded Queue & Chống Tràn Bộ Nhớ (Backpressure)
 
-Khi nhận tín hiệu `SIGINT` (`Ctrl+C`) hoặc `SIGTERM` từ systemd, `EdgeAIManager::shutdown()` giải phóng tài nguyên theo trình tự chuẩn:
-
-```
-[Bước 1] pipeline_->stop()         ── Dừng DeepStream pipeline, chuyển GStreamer về GST_STATE_NULL.
-[Bước 2] deepstream_hal_->stop()   ── Hủy probe callback, giải phóng bus watch và GstElement.
-[Bước 3] health_svc_->stop()       ── Dừng luồng watchdog, ghi ký tự 'V' đóng /dev/watchdog an toàn.
-[Bước 4] storage_svc_->shutdown()  ── Flush toàn bộ bản ghi còn lại trong hàng đợi xuống SQLite, đóng DB.
-[Bước 5] mqtt_svc_->disconnect()   ── Flush offline queue (nếu có mạng), ngắt kết nối socket broker sạch sẽ.
-[Bước 6] event_bus_->stop()        ── Đặt running_=false, notify_all, join() dispatch_thread_.
-```
-
-Toàn bộ tài nguyên bộ nhớ GPU (`cudaFree`), bộ đệm NVMM và kết nối mạng được thu hồi 100%, không xảy ra hiện tượng rò rỉ bộ nhớ (Memory Leak) hoặc treo tiến trình (Deadlock).
+* **Bounded Queue trong `EventBus`**: Hàng đợi ring buffer dung lượng tối đa $256$ sự kiện. Nếu I/O đĩa hoặc mạng bị trễ tạm thời, hàng đợi tự động drop bản ghi cũ nhất theo chính sách FIFO ring-buffer để bảo toàn Unified RAM.
+* **Tách biệt luồng xử lý**: Việc tính toán logic (`RuleEngine`), ghi đĩa SQLite (`StorageService`), và truyền tin mạng (`MqttService`) nằm hoàn toàn trên các luồng worker độc lập, đảm bảo Pad Probe callback luôn hoàn thành dưới $0.05\text{ ms}$, không bao giờ làm trễ luồng DeepStream GStreamer.

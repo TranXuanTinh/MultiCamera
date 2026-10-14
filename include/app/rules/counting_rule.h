@@ -28,6 +28,7 @@ public:
     void setEnabled(bool enabled) override { enabled_ = enabled; }
 
     std::optional<Alert> evaluate(const std::vector<TrackedObject>& objects) override;
+    void resetCameraState(const std::string& camera_id) override;
 
     int getTotalCount() const { return total_count_; }
 
@@ -46,7 +47,7 @@ private:
     bool enabled_{true};
 
     int total_count_{0};
-    std::map<int, float> previous_side_;
+    std::map<std::pair<std::string, int>, float> previous_side_;
 };
 
 } // namespace edge_ai
