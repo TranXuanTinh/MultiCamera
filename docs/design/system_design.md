@@ -10,7 +10,8 @@ In accordance with embedded real-time standards (AUTOSAR, POSIX profiles, IEC 62
 ```
 +-------------------------------------------------------------------------------+
 | 1. APP LAYER (Business Logic & Orchestration)                                |
-|    - EdgeAIManager (Lifecycle, Multi-Camera DI, Signal Handling)              |
+|    - main.cpp (CLI Entry Point, POSIX Signals SIGINT/SIGTERM, Process Exit)   |
+|    - EdgeAIManager (Lifecycle, Multi-Camera DI, Orchestration)                |
 |    - Pipeline (Dual Mode: DeepStream Orchestration / Modular Service Pipeline)|
 |    - RuleEngine (Per-Camera Rules: Zone Intrusion, Line Crossing, Counting)   |
 +-----------------------------------^-------------------------------------------+

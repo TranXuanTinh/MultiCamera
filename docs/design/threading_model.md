@@ -63,7 +63,28 @@ Jetson Nano 4GB
 | **Service** | **MQTT Worker** | Service / HAL | Paho MQTT C runtime | Bất đồng bộ | 1% – 2% | Quản lý socket TCP/TLS, publish telemetry theo từng `camera_id` |
 | **Service** | **Health & Watchdog** | Service Layer | `HealthService::monitorLoop()` | 30 giây / lần | < 0.5% | Đọc sysfs nhiệt độ, đá `/dev/watchdog` duy trì hệ thống |
 
-### 2.1 Luồng Trong Chế Độ Modular Fallback Pipeline (Khi không chạy DeepStream)
+### 2.1 Đặc Tả Vòng Đời Luồng Chính (`main.cpp` & Bẫy Tín Hiệu POSIX)
+Luồng chính (Main Thread) bắt đầu tại điểm nhập cảnh `main()` trong `src/app/main.cpp` và điều phối toàn bộ vòng đời ứng dụng:
+1. **Phân tích tham số CLI**: Quét các cờ cấu hình `--config` (chỉ định file YAML) và `--mock` (chế độ giả lập Host PC).
+2. **Cài đặt bẫy tín hiệu an toàn (Async-Signal-Safe)**:
+   * Đăng ký bộ xử lý tín hiệu `std::signal(SIGINT, EdgeAIManager::signalHandler)` và `std::signal(SIGTERM, EdgeAIManager::signalHandler)`.
+   * Hàm callback `signalHandler(int signum)` chỉ thực hiện ghi biến nguyên tử:
+     ```cpp
+     std::atomic<bool> EdgeAIManager::stop_requested{false};
+     void EdgeAIManager::signalHandler(int signum) {
+         (void)signum;
+         stop_requested = true; // Lock-free atomic store, async-signal-safe 100%
+     }
+     ```
+   * Tuyệt đối không cấp phát bộ nhớ động (`malloc`), không khóa `mutex`, không gọi I/O trong ngữ cảnh ngắt tín hiệu POSIX.
+3. **Điều phối vòng lặp (`run()`)**:
+   * Trong chế độ DeepStream, do toàn bộ việc giải mã NVDEC, gom mẻ `nvstreammux`, suy luận GPU TensorRT và pad probe đều chạy trên các luồng phần cứng độc lập của GStreamer/CUDA, luồng chính chủ động đi vào trạng thái ngủ `std::this_thread::sleep_for(std::chrono::milliseconds(50))`.
+   * Mức chiếm dụng CPU của luồng chính hầu như xấp xỉ $0\%$ ($< 0.1\%$).
+4. **Kết thúc và trả mã thoát (Exit Code)**:
+   * Khi bắt được tín hiệu ngắt (từ bàn phím `Ctrl+C` hoặc từ systemd daemon `systemctl stop`), biến `stop_requested` kích hoạt luồng chính thoát vòng lặp và thực thi tuần tự quy trình `app.shutdown()`.
+   * Trả về mã thoát `0` (Thành công) hoặc `1` (Lỗi khởi tạo phần cứng/cấu hình nghiêm trọng).
+
+### 2.2 Luồng Trong Chế Độ Modular Fallback Pipeline (Khi không chạy DeepStream)
 Khi ứng dụng chạy ở chế độ đơn kênh / kiểm tra độc lập dịch vụ:
 * **`CameraService`**: Quản lý luồng thu nhận ảnh tuần tự từ `ICameraHAL` (`grabFrame()`), duy trì tốc độ 30 FPS.
 * **`InferenceService`**: Thực thi tiền xử lý (`Preprocessor`), chuyển giao buffer sang `IGpuHAL::runInference()` trên GPU Stream, và giải mã tensor (`Postprocessor`).

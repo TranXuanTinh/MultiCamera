@@ -52,7 +52,89 @@ src/
 
 ---
 
-## 2. Dependency Injection & Object Lifecycle
+## 2. Application Entry Point & CLI Specification (`main.cpp`)
+
+The system entry point is located in `src/app/main.cpp`. It acts as the process bootstrapper, command-line interface (CLI) parser, POSIX signal trap handler, and runtime lifecycle controller:
+
+```cpp
+int main(int argc, char* argv[]) {
+    std::string config_path = "config/app_config.yaml";
+    bool use_mock_hal = false;
+
+    // 1. Parse Command-Line Options
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (arg == "--mock" || arg == "-m") {
+            use_mock_hal = true;
+        } else if (arg == "--help" || arg == "-h") {
+            printUsage();
+            return 0;
+        } else if (arg == "--version" || arg == "-v") {
+            printVersion();
+            return 0;
+        }
+    }
+
+    // 2. Install POSIX Signal Handlers
+    std::signal(SIGINT,  edge_ai::EdgeAIManager::signalHandler);
+    std::signal(SIGTERM, edge_ai::EdgeAIManager::signalHandler);
+
+    // 3. Instantiate Application Orchestrator on Stack (RAII)
+    edge_ai::EdgeAIManager app;
+
+    // 4. Initialize Subsystems & Services
+    if (!app.initialize(config_path, use_mock_hal)) {
+        std::cerr << "[Fatal Error] EdgeAIManager failed to initialize.\n";
+        return 1;
+    }
+
+    // 5. Enter Multi-Camera Processing Loop
+    app.run();
+
+    // 6. Execute Deterministic Graceful Teardown
+    app.shutdown();
+
+    return 0;
+}
+```
+
+### 2.1 CLI Arguments Reference
+
+| Option | Long Option | Argument | Default Value | Description |
+|---|---|---|---|---|
+| `-c` | `--config` | `<file_path>` | `config/app_config.yaml` | Path to master YAML application configuration file |
+| `-m` | `--mock` | None | `false` | Run in Host PC Simulation mode using `MockDeepStreamHAL` without physical Jetson GPU/CSI hardware |
+| `-h` | `--help` | None | - | Display command-line usage syntax and exit with code `0` |
+| `-v` | `--version` | None | - | Display application release version (`edge-ai-manager v1.0.0`) and exit with code `0` |
+
+### 2.2 POSIX Signal Handling Architecture
+* **Signals Trapped**: `SIGINT` (Terminal interrupt `Ctrl+C`) and `SIGTERM` (Termination request sent by `systemd` daemon upon `systemctl stop`).
+* **Atomic Flag (`stop_requested`)**: `EdgeAIManager::signalHandler()` writes to `std::atomic<bool> EdgeAIManager::stop_requested{true}`. This guarantees signal-safety (no memory allocation or mutex locking inside the signal handler context).
+* **Process Exit Codes**:
+  * `0`: Clean shutdown following graceful termination of all services.
+  * `1`: Fatal error during initialization (e.g. malformed YAML config, missing CSI sensor, or GStreamer pipeline failure).
+
+### 2.3 Process Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Bootstrapping
+    Bootstrapping --> Terminated : --help / --version (exit 0)
+    Bootstrapping --> Initializing : Valid CLI arguments
+    Initializing --> FatalError : Init Failure (exit 1)
+    FatalError --> [*]
+    Initializing --> Running : Init Succeeded
+    Running --> StopRequested : SIGINT / SIGTERM Trapped
+    StopRequested --> ShuttingDown : Loop Break
+    ShuttingDown --> Terminated : Graceful Teardown (exit 0)
+    Terminated --> [*]
+```
+
+---
+
+## 3. Dependency Injection & Object Lifecycle
 
 All dependencies are instantiated in `EdgeAIManager::initialize()` and injected via constructor references, completely avoiding global state or singletons:
 
@@ -115,9 +197,9 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
 
 ---
 
-## 3. Class Design & Component Contracts
+## 4. Class Design & Component Contracts
 
-### 3.1 DeepStream Hardware Abstraction (`IDeepStreamHAL`)
+### 4.1 DeepStream Hardware Abstraction (`IDeepStreamHAL`)
 * Pure virtual contract for the multi-camera pipeline:
   ```cpp
   class IDeepStreamHAL {
@@ -137,12 +219,12 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
   };
   ```
 
-### 3.2 Modular Video Analytics Services
+### 4.2 Modular Video Analytics Services
 * **`CameraService`**: Encapsulates single-source camera operations (`open`, `grabFrame`, `release`, `getFps`), abstracting hardware specific formats.
 * **`InferenceService`**: Encapsulates preprocessing (`Preprocessor`), hardware TensorRT engine invocation (`IGpuHAL::runInference`), and postprocessing (`Postprocessor`), outputting `std::vector<Detection>`.
 * **`TrackerService`**: Implements ByteTrack multi-object tracking associating high-confidence and low-confidence detections across consecutive frames via `KalmanFilter` and `Hungarian` solver.
 
-### 3.3 Rule Engine Polymorphism (`IRule`)
+### 4.3 Rule Engine Polymorphism (`IRule`)
 * Abstract rule contract with camera isolation and lifecycle reset:
   ```cpp
   class IRule {
@@ -161,7 +243,7 @@ bool EdgeAIManager::initialize(const std::string& config_file, bool use_mock_hal
   * `ZoneRule`: Detects polygon intrusion using Ray-Casting algorithm. Maintains isolated per-camera alert cooldown timers (`last_alert_time_per_cam_`) and resets timer state via `resetCameraState(camera_id)` on camera reconnect.
   * `CountingRule`: Detects directional line crossing. Employs compound keying (`std::pair<std::string, int>` for `[camera_id, track_id]`) in `previous_side_` to eliminate cross-camera track ID collision, and purges tracking memory on reconnect via `resetCameraState(camera_id)`.
 
-### 3.4 Ordered Graceful Shutdown Sequence
+### 4.4 Ordered Graceful Shutdown Sequence
 To prevent segmentation faults, dropped data, or unintended hardware watchdog reboots, `EdgeAIManager::shutdown()` coordinates a 4-phase safe teardown:
 ```cpp
 void EdgeAIManager::shutdown() {
@@ -184,7 +266,7 @@ void EdgeAIManager::shutdown() {
 
 ---
 
-## 4. Testability Strategy: Host PC Development with Mock HAL
+## 5. Testability Strategy: Host PC Development with Mock HAL
 
 * Developers can build and test the full application and all services on standard x86 Linux or Windows machines without NVIDIA Jetson hardware:
   ```bash

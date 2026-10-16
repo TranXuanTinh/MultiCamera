@@ -354,3 +354,104 @@ During shutdown, all in-flight metadata must be cleanly committed without blocki
 3. **Flush SQLite & Disconnect MQTT**: `StorageService::shutdown()` joins the background writer thread and invokes `flushQueue()` within a transaction before closing the SQLite database handle. `MqttService::disconnect()` sends MQTT DISCONNECT packet cleanly.
 4. **Safe Watchdog Release**: `HealthService::stop()` writes `'V'` to `/dev/watchdog` before closing the file descriptor, ensuring the board does not reboot during application termination.
 
+---
+
+## 8. Application Entry Point & Signal Handling Specification (`main.cpp`)
+
+The executable binary (`edge-ai-manager`) entry point is implemented in `src/app/main.cpp`:
+
+```cpp
+int main(int argc, char* argv[]) {
+    std::string config_path = "config/app_config.yaml";
+    bool use_mock_hal = false;
+
+    // 1. Argument parsing
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (arg == "--mock" || arg == "-m") {
+            use_mock_hal = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: edge-ai-manager [options]\n"
+                      << "Options:\n"
+                      << "  -c, --config <file>  Path to YAML configuration file (default: config/app_config.yaml)\n"
+                      << "  -m, --mock           Run in host PC mock mode (without Jetson GPU/CSI camera)\n"
+                      << "  -h, --help           Show this help message\n"
+                      << "  -v, --version        Print version info\n";
+            return 0;
+        } else if (arg == "--version" || arg == "-v") {
+            std::cout << "edge-ai-manager v1.0.0 (Jetson Nano / Yocto Linux / C++17)\n";
+            return 0;
+        }
+    }
+
+    // 2. Install POSIX signal handlers
+    std::signal(SIGINT,  edge_ai::EdgeAIManager::signalHandler);
+    std::signal(SIGTERM, edge_ai::EdgeAIManager::signalHandler);
+
+    // 3. Application instantiation & RAII lifecycle
+    edge_ai::EdgeAIManager app;
+
+    if (!app.initialize(config_path, use_mock_hal)) {
+        std::cerr << "[Fatal Error] EdgeAIManager failed to initialize.\n";
+        return 1;
+    }
+
+    app.run();
+    app.shutdown();
+
+    return 0;
+}
+```
+
+### 8.1 Async-Signal-Safe Signal Handler (`EdgeAIManager::signalHandler`)
+POSIX signal handling inside multi-threaded C++ applications requires strict avoidance of non-reentrant functions (e.g. `malloc`, `printf`, `mutex::lock`):
+```cpp
+// Static member variable in EdgeAIManager
+std::atomic<bool> EdgeAIManager::stop_requested{false};
+
+void EdgeAIManager::signalHandler(int signum) {
+    (void)signum;
+    stop_requested = true; // Lock-free atomic store, guaranteed async-signal-safe
+}
+```
+
+### 8.2 Main Thread Processing Loop (`EdgeAIManager::run`)
+```cpp
+void EdgeAIManager::run() {
+    if (!initialized_) return;
+
+    LogService::info("Entering multi-camera detection loop...");
+
+    while (!stop_requested) {
+        if (!pipeline_->isDeepStream()) {
+            // Modular fallback single-camera mode (CPU / OpenCV)
+            PipelineResult result;
+            if (pipeline_->processOneFrame(result)) {
+                onPipelineResult(result);
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        } else {
+            // DeepStream mode: Ingestion, batching, inference, and pad probe
+            // execute fully asynchronously on GStreamer/CUDA hardware threads.
+            // Main thread sleeps to yield CPU cycles (< 0.1% CPU load).
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+
+    LogService::info("Stop requested, exiting multi-camera detection loop...");
+}
+```
+
+### 8.3 Return Codes & Failure Modes
+
+| Exit Code | Condition | Cause | Mitigations |
+|:---:|---|---|---|
+| **`0`** | Clean Exit | User triggered `Ctrl+C` (`SIGINT`) or systemd stopped service (`SIGTERM`) | Normal lifecycle termination |
+| **`0`** | CLI Inquiry | Executed with `--help` or `--version` | Informational CLI flags |
+| **`1`** | Fatal Init Error | Configuration file not found or corrupted YAML syntax | Check `-c <path>` or verify YAML syntax with `yamllint` |
+| **`1`** | Hardware HAL Error | CSI sensor not detected or DeepStream pipeline failed to initialize | Check camera cables (`dmesg \| grep imx219`) or restart `nvargus-daemon` |
+
+
